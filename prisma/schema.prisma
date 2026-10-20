@@ -30,7 +30,7 @@ model TestRun {
 }
 
 model DeliveryAttempt {
-  id            BigInt   @id @default(autoincrement())
+  id            Int      @id @default(autoincrement())
   runId         String
   attemptNumber Int
   eventId       String
@@ -47,7 +47,7 @@ model DeliveryAttempt {
 }
 
 model AssertionResult {
-  id         BigInt   @id @default(autoincrement())
+  id         Int      @id @default(autoincrement())
   runId      String
   name       String
   expected   String

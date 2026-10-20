@@ -1,9 +1,10 @@
 # RelayCheck Control API
 
-NestJS HTTP API. Validates run requests, creates run records, and serves the
-public run/result contracts. Queue publication and the private runner-reporting
-endpoints land in the dispatch/lifecycle task — create-run currently persists
-the run as `queued` and does not pretend to enqueue anything.
+NestJS HTTP API. Validates run requests, creates run records, publishes
+versioned run jobs to RabbitMQ, and serves the public run/result contracts.
+It is the sole writer of the platform tables; the Scenario Runner reports
+evidence through the private internal endpoints below and never connects to
+the platform database.
 
 Ownership boundaries (see `ARCHITECTURE.md` at the workspace root):
 
@@ -26,6 +27,29 @@ Ownership boundaries (see `ARCHITECTURE.md` at the workspace root):
   filter limited to `queued|running|passed|failed|error`.
 - `GET /api/runs/:id` — full detail: status, timestamps/duration, params,
   summary, `attempts[]`, `assertions[]`; 404 for unknown ids.
+
+Creating a run persists it as `queued` and then publishes a versioned job
+(`{schemaVersion: 1, runId, scenario, params}`) to the durable RabbitMQ
+queue `relaycheck.run.jobs`. If publication fails, the run is explicitly
+marked `error` with a safe error and the request returns 500 — a run is
+never silently stuck.
+
+## Private internal endpoints (not for the dashboard)
+
+All require header `x-internal-token: <INTERNAL_API_TOKEN>` (unconfigured
+token / missing / wrong token → 401):
+
+- `POST /api/internal/runs/:id/claim` — `queued → running`, atomic via
+  conditional `updateMany`; a second claim of the same run → 409 (this is
+  what prevents a redelivered job from starting a concurrent execution).
+- `POST /api/internal/runs/:id/attempts` — record one delivery attempt
+  (number, eventId, httpStatus?, outcome `delivered|error|timeout`,
+  durationMs, errorDetail?). Only accepted while the run is `running`.
+- `POST /api/internal/runs/:id/assertions` — record an assertion result
+  (`name`, `expected`, `actual`, `passed`). Only while `running`.
+- `POST /api/internal/runs/:id/finalize` — terminal transition to
+  `passed|failed|error` with summary and optional safe error. Only while
+  `running`; a second finalize → 409.
 
 ## Setup
 

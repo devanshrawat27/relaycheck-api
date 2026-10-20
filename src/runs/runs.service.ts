@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { QueueService } from '../queue/queue.service';
 import { CreateRunDto } from './dto/create-run.dto';
 import { ListRunsQueryDto } from './dto/list-runs.dto';
 
@@ -28,7 +29,12 @@ const DUPLICATE_SCENARIO = {
 
 @Injectable()
 export class RunsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(RunsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly queue: QueueService,
+  ) {}
 
   async createRun(dto: CreateRunDto): Promise<CreateRunResult> {
     const runId = randomUUID();
@@ -50,8 +56,28 @@ export class RunsService {
       },
     });
 
-    // Job publication to RabbitMQ is added in the dispatch task; the run is
-    // persisted as `queued` up front so it is guaranteed to exist first.
+    // The run is persisted BEFORE publishing so a job can never reference a
+    // missing run. If publication fails, the run is explicitly moved to
+    // `error` with a safe message — never left silently queued forever.
+    try {
+      await this.queue.publishRunJob({
+        schemaVersion: 1,
+        runId,
+        scenario: dto.scenario,
+        params,
+      });
+    } catch (error) {
+      this.logger.error(`Failed to publish job for run ${runId}: ${(error as Error).message}`);
+      await this.prisma.testRun.update({
+        where: { id: runId },
+        data: {
+          status: 'error',
+          safeError: 'Run job could not be published to the queue',
+          finishedAt: new Date(),
+        },
+      });
+      throw new InternalServerErrorException('Run job could not be published to the queue');
+    }
 
     return {
       runId: run.id,

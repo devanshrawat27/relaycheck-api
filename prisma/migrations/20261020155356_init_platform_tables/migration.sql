@@ -16,7 +16,7 @@ CREATE TABLE "test_runs" (
 
 -- CreateTable
 CREATE TABLE "delivery_attempts" (
-    "id" BIGSERIAL NOT NULL,
+    "id" SERIAL NOT NULL,
     "runId" TEXT NOT NULL,
     "attemptNumber" INTEGER NOT NULL,
     "eventId" TEXT NOT NULL,
@@ -31,7 +31,7 @@ CREATE TABLE "delivery_attempts" (
 
 -- CreateTable
 CREATE TABLE "assertion_results" (
-    "id" BIGSERIAL NOT NULL,
+    "id" SERIAL NOT NULL,
     "runId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "expected" TEXT NOT NULL,
