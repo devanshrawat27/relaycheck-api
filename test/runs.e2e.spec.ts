@@ -47,6 +47,13 @@ describe('Control API runs endpoints (e2e)', () => {
     createdRunIds.push(res.body.runId as string);
 
     const detail = await request(server).get(`/api/runs/${res.body.runId}`).expect(200);
+    // persisted run shape: status, scenario identifier, timestamps, summary
+    expect(detail.body.status).toBe('queued');
+    expect(detail.body.scenario).toBe('duplicate_delivery');
+    expect(typeof detail.body.createdAt).toBe('string');
+    expect(detail.body.startedAt).toBeNull();
+    expect(detail.body.finishedAt).toBeNull();
+    expect(detail.body.summary).toContain('3 deliveries');
     const params = detail.body.params as Record<string, unknown>;
     expect(params.eventType).toBe('payment.succeeded');
     expect(params.deliveryCount).toBe(3);
