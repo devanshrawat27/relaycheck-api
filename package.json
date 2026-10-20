@@ -1,0 +1,12 @@
+{
+  "name": "@relaycheck/control-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RelayCheck Control API - validates run requests, owns and writes RelayCheck platform tables, publishes run jobs to RabbitMQ, serves public run contracts.",
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
