@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// RelayCheck platform tables. The Control API is the sole writer;
+// the Scenario Runner never connects directly to these tables.
+
+model TestRun {
+  id          String    @id
+  scenario    String
+  status      String    @default("queued")
+  params      Json
+  summary     String?
+  safeError   String?
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  durationMs  Int?
+
+  attempts   DeliveryAttempt[]
+  assertions AssertionResult[]
+
+  @@index([status, createdAt])
+  @@map("test_runs")
+}
+
+model DeliveryAttempt {
+  id            BigInt   @id @default(autoincrement())
+  runId         String
+  attemptNumber Int
+  eventId       String
+  httpStatus    Int?
+  outcome       String
+  durationMs    Int
+  errorDetail   String?
+  createdAt     DateTime @default(now())
+
+  run TestRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@map("delivery_attempts")
+}
+
+model AssertionResult {
+  id         BigInt   @id @default(autoincrement())
+  runId      String
+  name       String
+  expected   String
+  actual     String
+  passed     Boolean
+  createdAt  DateTime @default(now())
+
+  run TestRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@map("assertion_results")
+}
