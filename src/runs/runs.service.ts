@@ -21,11 +21,29 @@ export interface CreateRunResult {
 }
 
 /** Server-side bounds — timeout and delivery count are never user-controlled. */
-const DUPLICATE_SCENARIO = {
-  eventType: 'payment.succeeded',
-  deliveryCount: 3,
-  timeoutMs: 5000,
-} as const;
+interface ScenarioDefinition {
+  deliveryCount: number;
+  timeoutMs: number;
+  summary: string;
+}
+
+const SCENARIOS: Record<string, ScenarioDefinition> = {
+  duplicate_delivery: {
+    deliveryCount: 3,
+    timeoutMs: 5000,
+    summary: '3 deliveries of one event ID must produce one business effect',
+  },
+  receiver_failure: {
+    deliveryCount: 1,
+    timeoutMs: 3000,
+    summary: 'Receiver returns a controlled 503; no business effect may be applied',
+  },
+  receiver_timeout: {
+    deliveryCount: 1,
+    timeoutMs: 1000,
+    summary: 'Receiver delays past the client timeout; the delivery must be recorded as timed out',
+  },
+};
 
 @Injectable()
 export class RunsService {
@@ -37,13 +55,18 @@ export class RunsService {
   ) {}
 
   async createRun(dto: CreateRunDto): Promise<CreateRunResult> {
+    const scenario = SCENARIOS[dto.scenario];
+    if (!scenario) {
+      throw new InternalServerErrorException(`Unsupported scenario ${dto.scenario}`);
+    }
+
     const runId = randomUUID();
     const params: RunParams = {
-      eventType: DUPLICATE_SCENARIO.eventType,
+      eventType: 'payment.succeeded',
       eventId: `evt_${randomUUID()}`,
       orderId: `ord_${randomUUID()}`,
-      deliveryCount: DUPLICATE_SCENARIO.deliveryCount,
-      timeoutMs: DUPLICATE_SCENARIO.timeoutMs,
+      deliveryCount: scenario.deliveryCount,
+      timeoutMs: scenario.timeoutMs,
     };
 
     const run = await this.prisma.testRun.create({
@@ -52,7 +75,7 @@ export class RunsService {
         scenario: dto.scenario,
         status: 'queued',
         params: params as unknown as object,
-        summary: `3 deliveries of one event ID must produce one business effect`,
+        summary: scenario.summary,
       },
     });
 

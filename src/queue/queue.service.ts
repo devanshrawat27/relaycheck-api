@@ -30,14 +30,17 @@ export class QueueService {
     const url = process.env.AMQP_URL ?? 'amqp://guest:guest@localhost:5672';
     const connection = await amqp.connect(url);
     try {
-      const channel = await connection.createChannel();
+      // Confirm channel: only report success once the broker has accepted the
+      // message (publisher confirms), not merely when it was written to a socket.
+      const channel = await connection.createConfirmChannel();
       try {
         await channel.assertQueue(RUN_JOBS_QUEUE, { durable: true });
         channel.sendToQueue(RUN_JOBS_QUEUE, Buffer.from(JSON.stringify(job)), {
           persistent: true,
           contentType: 'application/json',
         });
-        this.logger.debug(`Published run job for run ${job.runId}`);
+        await channel.waitForConfirms();
+        this.logger.debug(`Published run job for run ${job.runId} (confirmed)`);
       } finally {
         await channel.close();
       }

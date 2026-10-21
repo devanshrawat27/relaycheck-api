@@ -66,6 +66,37 @@ describe('Control API runs endpoints (e2e)', () => {
     expect(Array.isArray(detail.body.assertions)).toBe(true);
   });
 
+  it('POST /api/runs creates a receiver_failure run with bounded params', async () => {
+    const server = app.getHttpServer();
+    const res = await request(server)
+      .post('/api/runs')
+      .send({ scenario: 'receiver_failure' })
+      .expect(202);
+    expect(res.body.scenario).toBe('receiver_failure');
+    createdRunIds.push(res.body.runId as string);
+
+    const detail = await request(server).get(`/api/runs/${res.body.runId}`).expect(200);
+    const params = detail.body.params as Record<string, unknown>;
+    expect(params.deliveryCount).toBe(1);
+    expect(params.timeoutMs).toBe(3000);
+    expect(detail.body.summary).toContain('controlled 503');
+  });
+
+  it('POST /api/runs creates a receiver_timeout run with a bounded timeout', async () => {
+    const server = app.getHttpServer();
+    const res = await request(server)
+      .post('/api/runs')
+      .send({ scenario: 'receiver_timeout' })
+      .expect(202);
+    createdRunIds.push(res.body.runId as string);
+
+    const detail = await request(server).get(`/api/runs/${res.body.runId}`).expect(200);
+    const params = detail.body.params as Record<string, unknown>;
+    expect(params.deliveryCount).toBe(1);
+    expect(params.timeoutMs).toBe(1000);
+    expect(detail.body.summary).toContain('timed out');
+  });
+
   it('POST /api/runs rejects an unknown scenario (400)', async () => {
     await request(app.getHttpServer())
       .post('/api/runs')
