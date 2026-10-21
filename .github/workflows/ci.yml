@@ -70,3 +70,142 @@ jobs:
 
       - name: Build (if present)
         run: npm run build --if-present
+
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      platform-db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: relaycheck
+          POSTGRES_PASSWORD: relaycheck
+          POSTGRES_DB: relaycheck
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U relaycheck -d relaycheck"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      demo-db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: relaycheck
+          POSTGRES_PASSWORD: relaycheck
+          POSTGRES_DB: relaycheck_demo
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U relaycheck -d relaycheck_demo"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      rabbitmq:
+        image: rabbitmq:3.13-alpine
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 12
+
+    env:
+      DATABASE_URL: postgresql://relaycheck:relaycheck@localhost:5432/relaycheck
+      SMOKE_DEMO_DATABASE_URL: postgresql://relaycheck:relaycheck@localhost:5433/relaycheck_demo
+      AMQP_URL: amqp://guest:guest@localhost:5672
+      INTERNAL_API_TOKEN: ci-internal-token
+      CONTROL_API_URL: http://127.0.0.1:3200
+      DEMO_RECEIVER_URL: http://127.0.0.1:3100
+
+    steps:
+      - name: Checkout Control API
+        uses: actions/checkout@v4
+
+      - name: Checkout Demo Receiver
+        uses: actions/checkout@v4
+        with:
+          repository: devanshrawat27/relaycheck-demo-receiver
+          path: deps/demo-receiver
+
+      - name: Checkout Scenario Runner
+        uses: actions/checkout@v4
+        with:
+          repository: devanshrawat27/relaycheck-runner
+          path: deps/runner
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            deps/demo-receiver/package-lock.json
+            deps/runner/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix deps/demo-receiver
+          npm ci --prefix deps/runner
+
+      - name: Build all services
+        run: |
+          npm run build
+          npm run build --prefix deps/demo-receiver
+          npm run build --prefix deps/runner
+
+      - name: Apply database migrations
+        run: |
+          npx prisma migrate deploy
+          cd deps/demo-receiver
+          DATABASE_URL="$SMOKE_DEMO_DATABASE_URL" npx prisma migrate deploy
+
+      - name: Start services
+        run: |
+          (cd deps/demo-receiver && DATABASE_URL="$SMOKE_DEMO_DATABASE_URL" RELAYCHECK_TEST_MODE=true PORT=3100 node dist/main > /tmp/demo.log 2>&1 &)
+          (PORT=3200 node dist/main > /tmp/api.log 2>&1 &)
+          (cd deps/runner && CONTROL_API_URL="$CONTROL_API_URL" INTERNAL_API_TOKEN="$INTERNAL_API_TOKEN" DEMO_RECEIVER_URL="$DEMO_RECEIVER_URL" AMQP_URL="$AMQP_URL" node dist/main > /tmp/runner.log 2>&1 &)
+
+          for url in http://127.0.0.1:3200/api/health http://127.0.0.1:3100/api/health; do
+            for i in $(seq 1 30); do
+              if curl -fsS "$url" > /dev/null 2>&1; then break; fi
+              sleep 1
+            done
+            curl -fsS "$url" > /dev/null
+          done
+
+      - name: Smoke test (must pass)
+        run: npm run smoke
+
+      - name: Prove a failed assertion fails the smoke command
+        run: |
+          curl -fsS -X POST http://127.0.0.1:3100/api/__test__/faults \
+            -H 'content-type: application/json' \
+            -d '{"mode":"error","httpStatus":503}' > /dev/null
+
+          set +e
+          npm run smoke
+          smoke_exit=$?
+          set -e
+
+          curl -fsS -X DELETE http://127.0.0.1:3100/api/__test__/faults > /dev/null
+
+          if [ "$smoke_exit" -eq 0 ]; then
+            echo "::error::Smoke test exited 0 even though required assertions failed"
+            exit 1
+          fi
+          echo "Deliberate assertion failure correctly produced exit code $smoke_exit"
+
+      - name: Show service logs on failure
+        if: failure()
+        run: |
+          echo '--- api.log'
+          tail -n 80 /tmp/api.log || true
+          echo '--- runner.log'
+          tail -n 80 /tmp/runner.log || true
+          echo '--- demo.log'
+          tail -n 80 /tmp/demo.log || true
