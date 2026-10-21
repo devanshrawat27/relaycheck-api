@@ -178,6 +178,74 @@ describe('Queue publication + internal lifecycle contract (e2e)', () => {
     expect(detail.body.assertions[0].name).toBe('business_effect_applied_once');
   });
 
+  it('exposes complete attempt and assertion evidence in run details', async () => {
+    const runId = await createRun();
+    const job = await consumeOneJob();
+    const eventId = (job.params as { eventId: string }).eventId;
+
+    await request(server())
+      .post(`/api/internal/runs/${runId}/claim`)
+      .set('x-internal-token', TOKEN)
+      .expect(201);
+
+    for (const attemptNumber of [1, 2, 3]) {
+      await request(server())
+        .post(`/api/internal/runs/${runId}/attempts`)
+        .set('x-internal-token', TOKEN)
+        .send({
+          attemptNumber,
+          eventId,
+          outcome: 'delivered',
+          httpStatus: 201,
+          durationMs: 10 + attemptNumber,
+        })
+        .expect(201);
+    }
+
+    const assertionPayloads = [
+      { name: 'delivery_attempt_count', expected: '3', actual: '3', passed: true },
+      { name: 'deliveries_accepted', expected: '3', actual: '3', passed: true },
+      { name: 'business_effect_applied_once', expected: '1', actual: '1', passed: true },
+    ];
+    for (const payload of assertionPayloads) {
+      await request(server())
+        .post(`/api/internal/runs/${runId}/assertions`)
+        .set('x-internal-token', TOKEN)
+        .send(payload)
+        .expect(201);
+    }
+
+    await request(server())
+      .post(`/api/internal/runs/${runId}/finalize`)
+      .set('x-internal-token', TOKEN)
+      .send({ status: 'passed', summary: '3 attempts, 1 business effect' })
+      .expect(201);
+
+    const detail = await request(server()).get(`/api/runs/${runId}`).expect(200);
+    const attempts = detail.body.attempts as {
+      attemptNumber: number;
+      eventId: string;
+      httpStatus: number;
+      outcome: string;
+      durationMs: number;
+    }[];
+    expect(attempts).toHaveLength(3);
+    expect(attempts.map((a) => a.attemptNumber)).toEqual([1, 2, 3]);
+    expect(attempts.every((a) => a.eventId === eventId)).toBe(true);
+    expect(attempts.every((a) => a.outcome === 'delivered' && a.httpStatus === 201)).toBe(true);
+    expect(attempts.map((a) => a.durationMs)).toEqual([11, 12, 13]);
+
+    const assertions = detail.body.assertions as {
+      name: string;
+      expected: string;
+      actual: string;
+      passed: boolean;
+    }[];
+    expect(assertions.map(({ name, expected, actual, passed }) => ({ name, expected, actual, passed }))).toEqual(
+      assertionPayloads,
+    );
+  });
+
   it('rejects attempts on a queued (not claimed) run', async () => {
     const runId = await createRun();
     await consumeOneJob();
