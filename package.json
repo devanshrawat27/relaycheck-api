@@ -12,6 +12,7 @@
     "db:migrate": "prisma migrate dev",
     "start": "node dist/main",
     "start:dev": "nest start --watch",
+    "smoke": "node scripts/smoke.mjs",
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
     "type-check": "tsc --noEmit -p tsconfig.json",
     "test": "jest --config test/jest-e2e.json --runInBand"

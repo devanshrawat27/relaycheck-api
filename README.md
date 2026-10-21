@@ -51,6 +51,23 @@ token / missing / wrong token → 401):
   `passed|failed|error` with summary and optional safe error. Only while
   `running`; a second finalize → 409.
 
+## End-to-end smoke test
+
+`npm run smoke` runs the full duplicate-delivery scenario against the live
+local stack and verifies the required outcome:
+
+1. Creates a real run through the public API.
+2. Polls the run until a terminal state (bounded, default 90 s).
+3. Checks: run `passed`, 3 delivery attempts, 3 accepted (2xx) deliveries,
+   exactly one business effect.
+4. Cleans up the platform run (attempts/assertions cascade) and the receiver
+   rows it created — even when the check fails.
+
+Exit code `0` = pass, `1` = assertion failure or execution error (CI-friendly).
+Prerequisites: Control API, RabbitMQ, Scenario Runner, and the Demo Receiver
+(with `RELAYCHECK_TEST_MODE=true`) all running. `DATABASE_URL` and
+`SMOKE_DEMO_DATABASE_URL` are used only for cleanup.
+
 ## Setup
 
 1. Start PostgreSQL (see the workspace root README).
