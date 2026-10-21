@@ -1,0 +1,45 @@
+# RelayCheck local infrastructure.
+# Canonical copy lives in the relaycheck-api repository (infra/).
+# Starts PostgreSQL 16 and RabbitMQ 3.13 with persistent volumes and creates
+# both logical databases on first start: `relaycheck` (platform) and
+# `relaycheck_demo` (demo receiver).
+name: relaycheck
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: relaycheck-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-relaycheck}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-relaycheck}
+      POSTGRES_DB: ${POSTGRES_DB:-relaycheck}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-relaycheck} -d ${POSTGRES_DB:-relaycheck}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: relaycheck-rabbitmq
+    ports:
+      - "${RABBITMQ_AMQP_PORT:-5672}:5672"
+      - "${RABBITMQ_MGMT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq/mnesia
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  rabbitmq-data:
