@@ -1,23 +1,22 @@
-import { Controller, Get, Header, UseGuards } from '@nestjs/common';
-import { ApiTokenGuard } from '../auth/api-token.guard';
+import { Controller, Get, Header, Req, UseGuards } from '@nestjs/common';
 import { RateLimitGuard } from '../auth/rate-limit.guard';
+import { AuthedRequest, SessionAuthGuard } from '../auth/session-auth.guard';
 import { MetricsResponse, MetricsService } from './metrics.service';
 
 /** Aggregate operational metrics (counts only). */
 @Controller('metrics')
-@UseGuards(ApiTokenGuard, RateLimitGuard)
+@UseGuards(SessionAuthGuard, RateLimitGuard)
 export class MetricsController {
   constructor(private readonly metrics: MetricsService) {}
 
   @Get()
-  get(): Promise<MetricsResponse> {
-    return this.metrics.snapshot();
+  get(@Req() request: AuthedRequest): Promise<MetricsResponse> {
+    return this.metrics.snapshot(request.auth);
   }
 
   @Get('prometheus')
   @Header('content-type', 'text/plain; version=0.0.4; charset=utf-8')
-  prometheus(): Promise<string> {
-    return this.metrics.prometheus();
+  prometheus(@Req() request: AuthedRequest): Promise<string> {
+    return this.metrics.prometheus(request.auth);
   }
 }
-

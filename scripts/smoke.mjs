@@ -16,9 +16,12 @@
  * only to clean up the exact rows it created.
  */
 
+import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
 
 const API_BASE = (process.env.CONTROL_API_URL ?? 'http://localhost:3200').replace(/\/$/, '');
+const API_TOKEN = process.env.API_AUTH_TOKEN;
+const authHeaders = API_TOKEN ? { authorization: `Bearer ${API_TOKEN}` } : {};
 const PLATFORM_DB = process.env.DATABASE_URL;
 const DEMO_DB =
   process.env.SMOKE_DEMO_DATABASE_URL ??
@@ -45,7 +48,7 @@ async function main() {
 
     const createResponse = await fetch(`${API_BASE}/api/runs`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...authHeaders },
       body: JSON.stringify({ scenario: 'duplicate_delivery' }),
     });
     if (createResponse.status !== 202) {
@@ -58,7 +61,7 @@ async function main() {
     const deadline = Date.now() + TIMEOUT_MS;
     let run = null;
     while (Date.now() < deadline) {
-      const response = await fetch(`${API_BASE}/api/runs/${runId}`);
+      const response = await fetch(`${API_BASE}/api/runs/${runId}`, { headers: authHeaders });
       if (!response.ok) {
         throw new Error(`run detail returned HTTP ${response.status}`);
       }
@@ -163,3 +166,4 @@ main().catch((error) => {
   console.error(`[smoke] UNEXPECTED: ${error instanceof Error ? error.stack : error}`);
   process.exitCode = 1;
 });
+

@@ -10,8 +10,59 @@ datasource db {
 // RelayCheck platform tables. The Control API is the sole writer;
 // the Scenario Runner never connects directly to these tables.
 
+model User {
+  id           String       @id
+  email        String       @unique
+  passwordHash String
+  role         String       @default("user")
+  createdAt    DateTime     @default(now())
+
+  memberships  Membership[]
+  sessions     Session[]
+
+  @@map("users")
+}
+
+model Workspace {
+  id          String       @id
+  name        String
+  createdAt   DateTime     @default(now())
+
+  memberships Membership[]
+  runs        TestRun[]
+
+  @@map("workspaces")
+}
+
+model Membership {
+  userId      String
+  workspaceId String
+  role        String   @default("owner")
+  createdAt   DateTime @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@id([userId, workspaceId])
+  @@map("memberships")
+}
+
+// Opaque, revocable sessions. Only the SHA-256 hash of the token is stored.
+model Session {
+  id        String   @id
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
 model TestRun {
   id          String    @id
+  workspaceId String?
   scenario    String
   status      String    @default("queued")
   params      Json
@@ -24,10 +75,12 @@ model TestRun {
   finishedAt  DateTime?
   durationMs  Int?
 
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
   attempts   DeliveryAttempt[]
   assertions AssertionResult[]
 
   @@index([status, createdAt])
+  @@index([workspaceId, createdAt])
   @@map("test_runs")
 }
 

@@ -1,14 +1,13 @@
 import { Module } from '@nestjs/common';
-import { ApiTokenGuard } from '../auth/api-token.guard';
+import { AuthModule } from '../auth/auth.module';
 import { RateLimitGuard } from '../auth/rate-limit.guard';
 import { QueueModule } from '../queue/queue.module';
 import { RunsController } from './runs.controller';
 import { RunsService } from './runs.service';
 
 @Module({
-  imports: [QueueModule],
+  imports: [QueueModule, AuthModule],
   controllers: [RunsController],
-  providers: [RunsService, ApiTokenGuard, RateLimitGuard],
+  providers: [RunsService, RateLimitGuard],
 })
 export class RunsModule {}
-

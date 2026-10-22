@@ -1,7 +1,16 @@
 {
-  "preset": "ts-jest",
-  "testEnvironment": "node",
-  "rootDir": ".",
-  "testMatch": ["<rootDir>/**/*.e2e.spec.ts"],
-  "moduleFileExtensions": ["ts", "js", "json"]
+    "preset":  "ts-jest",
+    "testEnvironment":  "node",
+    "rootDir":  ".",
+    "testMatch":  [
+                      "\u003crootDir\u003e/**/*.e2e.spec.ts"
+                  ],
+    "moduleFileExtensions":  [
+                                 "ts",
+                                 "js",
+                                 "json"
+                             ],
+    "setupFiles":  [
+                       "\u003crootDir\u003e/setup-env.js"
+                   ]
 }

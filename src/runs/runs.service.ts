@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { OutboxDispatcher } from '../queue/outbox.dispatcher';
+import { AuthContext } from '../auth/auth.types';
 import { CreateRunDto } from './dto/create-run.dto';
 import { ListRunsQueryDto } from './dto/list-runs.dto';
 
@@ -60,7 +61,7 @@ export class RunsService {
     private readonly outbox: OutboxDispatcher,
   ) {}
 
-  async createRun(dto: CreateRunDto): Promise<CreateRunResult> {
+  async createRun(dto: CreateRunDto, auth?: AuthContext): Promise<CreateRunResult> {
     const scenario = SCENARIOS[dto.scenario];
     if (!scenario) {
       throw new InternalServerErrorException(`Unsupported scenario ${dto.scenario}`);
@@ -71,7 +72,10 @@ export class RunsService {
       const startOfDay = new Date();
       startOfDay.setUTCHours(0, 0, 0, 0);
       const today = await this.prisma.testRun.count({
-        where: { createdAt: { gte: startOfDay } },
+        where: {
+          createdAt: { gte: startOfDay },
+          ...(auth ? { workspaceId: auth.workspaceId } : {}),
+        },
       });
       if (today >= maxPerDay) {
         throw new HttpException(
@@ -102,6 +106,7 @@ export class RunsService {
       this.prisma.testRun.create({
         data: {
           id: runId,
+          workspaceId: auth?.workspaceId ?? null,
           scenario: dto.scenario,
           status: 'queued',
           params: params as unknown as object,
@@ -132,7 +137,7 @@ export class RunsService {
     };
   }
 
-  async listRuns(query: ListRunsQueryDto) {
+  async listRuns(query: ListRunsQueryDto, auth?: AuthContext) {
     const take = query.take ?? 20;
 
     let cursorFilter: object = {};
@@ -153,6 +158,7 @@ export class RunsService {
 
     const runs = await this.prisma.testRun.findMany({
       where: {
+        ...(auth ? { workspaceId: auth.workspaceId } : {}),
         ...(query.status ? { status: query.status } : {}),
         ...cursorFilter,
       },
@@ -179,7 +185,7 @@ export class RunsService {
     };
   }
 
-  async getRun(runId: string) {
+  async getRun(runId: string, auth?: AuthContext) {
     const run = await this.prisma.testRun.findUnique({
       where: { id: runId },
       include: {
@@ -187,11 +193,12 @@ export class RunsService {
         assertions: { orderBy: { createdAt: 'asc' } },
       },
     });
-    if (!run) {
+    if (!run || (auth && run.workspaceId !== auth.workspaceId)) {
       throw new NotFoundException(`No run with id ${runId}`);
     }
+    const { workspaceId: _workspaceId, ...publicRun } = run;
     return {
-      ...run,
+      ...publicRun,
       createdAt: run.createdAt.toISOString(),
       startedAt: run.startedAt?.toISOString() ?? null,
       finishedAt: run.finishedAt?.toISOString() ?? null,
@@ -206,3 +213,5 @@ export class RunsService {
     };
   }
 }
+
+

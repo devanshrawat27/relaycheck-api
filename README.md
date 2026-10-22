@@ -86,14 +86,25 @@ test mode, API, runner), runs the smoke test, then stops the app processes
 again. Requires Docker running, sibling checkouts of the receiver and runner,
 and existing builds (`npm run build` once per repo).
 
-## Optional public API token
+## Accounts, workspaces and scoping
 
-By default the public run endpoints rely on loopback binding (local-only).
-If you override `HOST` (or otherwise expose the API), set `API_AUTH_TOKEN`
-and send `Authorization: Bearer <token>` with every `/api/runs` and
-`/api/metrics` request. `/api/health` stays public. This is a single shared
-token, not user accounts or tenancy; unauthenticated mode remains the local
-default.
+Set `AUTH_REQUIRED=true` to enable multi-user mode:
+
+- `POST /api/auth/register` `{ email, password }` — creates a user, a personal
+  workspace, and a session (httpOnly cookie + `token` in the body).
+- `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`
+  (`/me` always answers, reporting `authRequired` and the current user).
+- Runs created by a signed-in user are stamped with their workspace; list and
+  detail queries are scoped to that workspace (foreign runs return 404).
+- Sessions are opaque random tokens stored **hashed** (SHA-256) in
+  PostgreSQL; passwords are hashed with scrypt; logout revokes the session.
+- `API_AUTH_TOKEN` doubles as a machine credential for local automation/CI:
+  it can call public endpoints without a user session (loopback-only tool).
+
+With `AUTH_REQUIRED` unset (the default in `.env.example`), RelayCheck runs in
+local mode: no login, all runs visible, and `API_AUTH_TOKEN` optionally guards
+access. Existing local-mode runs have no workspace and are not visible in
+account mode.
 
 ## Operational metrics
 

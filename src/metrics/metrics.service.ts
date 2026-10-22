@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { AuthContext } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueueService } from '../queue/queue.service';
 import { RUN_STATUSES } from '../runs/dto/list-runs.dto';
@@ -26,9 +27,10 @@ export class MetricsService {
     private readonly queue: QueueService,
   ) {}
 
-  async snapshot(): Promise<MetricsResponse> {
+  async snapshot(auth?: AuthContext): Promise<MetricsResponse> {
     const grouped = await this.prisma.testRun.groupBy({
       by: ['status'],
+      where: auth ? { workspaceId: auth.workspaceId } : {},
       _count: { _all: true },
     });
 
@@ -71,8 +73,8 @@ export class MetricsService {
   }
 
   /** Prometheus text exposition (no external client dependency). */
-  async prometheus(): Promise<string> {
-    const metrics = await this.snapshot();
+  async prometheus(auth?: AuthContext): Promise<string> {
+    const metrics = await this.snapshot(auth);
     const lines: string[] = [];
 
     lines.push('# HELP relaycheck_runs_total Persisted runs by status.');
@@ -105,3 +107,4 @@ export class MetricsService {
     return `${lines.join('\n')}\n`;
   }
 }
+
