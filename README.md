@@ -106,6 +106,24 @@ local mode: no login, all runs visible, and `API_AUTH_TOKEN` optionally guards
 access. Existing local-mode runs have no workspace and are not visible in
 account mode.
 
+### Workspace roles and invitations
+
+Users can belong to several workspaces and switch the active one.
+
+- Roles: `owner` (manage everything), `admin` (invite/manage non-owners),
+  `member` (create/read runs). Enforced server-side; the last owner cannot be
+  removed or demoted.
+- `GET /api/workspace/members` — members of the active workspace.
+- `POST /api/workspace/invitations` `{ email?, role }` — owner/admin creates a
+  **one-time invite token** (valid 7 days, stored hashed). Returned once; the
+  dashboard shows it as a `/join?token=...` link (no email is sent).
+- `POST /api/workspace/accept-invitation` `{ token }` — joins the workspace,
+  marks the invite used, and switches the active workspace.
+- `POST /api/workspace/switch` `{ workspaceId }` — membership required.
+- `PATCH /api/workspace/members/:userId` `{ role }` — owner only.
+- `DELETE /api/workspace/members/:userId` — owner/admin (not yourself, never
+  the last owner).
+
 ## Operational metrics
 
 `GET /api/metrics` returns aggregate counts only (guarded by

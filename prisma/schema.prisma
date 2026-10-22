@@ -29,9 +29,27 @@ model Workspace {
   createdAt   DateTime     @default(now())
 
   memberships Membership[]
+  invitations Invitation[]
   runs        TestRun[]
 
   @@map("workspaces")
+}
+
+model Invitation {
+  id          String    @id
+  workspaceId String
+  email       String?
+  role        String    @default("member")
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdBy   String
+  createdAt   DateTime  @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@map("invitations")
 }
 
 model Membership {
@@ -49,10 +67,11 @@ model Membership {
 
 // Opaque, revocable sessions. Only the SHA-256 hash of the token is stored.
 model Session {
-  id        String   @id
-  userId    String
-  expiresAt DateTime
-  createdAt DateTime @default(now())
+  id                String   @id
+  userId            String
+  activeWorkspaceId String?
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

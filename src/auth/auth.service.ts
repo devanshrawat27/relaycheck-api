@@ -1,6 +1,7 @@
-import { randomBytes, randomUUID, createHash, scrypt, timingSafeEqual } from 'crypto';
+import { randomUUID, scrypt, timingSafeEqual } from 'crypto';
 import { promisify } from 'util';
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   UnauthorizedException,
@@ -9,6 +10,7 @@ import { Prisma } from '@prisma/client';
 import { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthContext, PublicIdentity } from './auth.types';
+import { hashToken, randomToken } from './tokens';
 
 const scryptAsync = promisify(scrypt) as (
   password: string,
@@ -18,7 +20,6 @@ const scryptAsync = promisify(scrypt) as (
 
 export const SESSION_COOKIE = 'relaycheck_session';
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const TOKEN_BYTES = 32;
 
 export interface IssuedSession {
   token: string;
@@ -26,7 +27,7 @@ export interface IssuedSession {
 }
 
 /**
- * Minimal multi-user auth: users belong to a workspace (tenant), sessions are
+ * Minimal multi-user auth: users belong to workspaces (tenants), sessions are
  * opaque tokens stored hashed in PostgreSQL and revocable by logout or expiry.
  * Passwords are hashed with scrypt (no external dependencies).
  */
@@ -34,14 +35,10 @@ export interface IssuedSession {
 export class AuthService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private hashToken(token: string): string {
-    return createHash('sha256').update(token).digest('hex');
-  }
-
   private async hashPassword(password: string): Promise<string> {
-    const salt = randomBytes(16).toString('hex');
-    const derived = await scryptAsync(password, salt, 64);
-    return `scrypt$${salt}$${derived.toString('hex')}`;
+    const salt = randomToken(16);
+    const derived = (await scryptAsync(password, salt, 64)).toString('hex');
+    return `scrypt$${salt}$${derived}`;
   }
 
   private async verifyPassword(password: string, stored: string): Promise<boolean> {
@@ -54,32 +51,45 @@ export class AuthService {
     return derived.length === expected.length && timingSafeEqual(derived, expected);
   }
 
-  private async issueSession(userId: string): Promise<string> {
-    const token = randomBytes(TOKEN_BYTES).toString('hex');
+  private async issueSession(userId: string, activeWorkspaceId: string | null): Promise<string> {
+    const token = randomToken(32);
     await this.prisma.session.create({
       data: {
-        id: this.hashToken(token),
+        id: hashToken(token),
         userId,
+        activeWorkspaceId,
         expiresAt: new Date(Date.now() + SESSION_TTL_MS),
       },
     });
     return token;
   }
 
-  private async identityFor(userId: string): Promise<PublicIdentity> {
-    const membership = await this.prisma.membership.findFirst({
+  /** Resolve the user's identity in their preferred (else first) workspace. */
+  async identityFor(userId: string, preferredWorkspaceId?: string | null): Promise<PublicIdentity> {
+    const memberships = await this.prisma.membership.findMany({
       where: { userId },
       include: { user: true, workspace: true },
+      orderBy: { createdAt: 'asc' },
     });
-    if (!membership) {
+    if (memberships.length === 0) {
       throw new UnauthorizedException('User has no workspace');
     }
+    const active =
+      memberships.find((membership) => membership.workspaceId === preferredWorkspaceId) ??
+      memberships[0]!;
+
     return {
-      id: membership.userId,
-      email: membership.user.email,
-      role: membership.user.role,
-      workspaceId: membership.workspaceId,
-      workspaceName: membership.workspace.name,
+      id: active.userId,
+      email: active.user.email,
+      role: active.user.role,
+      workspaceId: active.workspaceId,
+      workspaceName: active.workspace.name,
+      workspaceRole: active.role,
+      workspaces: memberships.map((membership) => ({
+        id: membership.workspaceId,
+        name: membership.workspace.name,
+        role: membership.role,
+      })),
     };
   }
 
@@ -108,8 +118,8 @@ export class AuthService {
       throw error;
     }
 
-    const token = await this.issueSession(userId);
-    return { token, user: await this.identityFor(userId) };
+    const token = await this.issueSession(userId, workspaceId);
+    return { token, user: await this.identityFor(userId, workspaceId) };
   }
 
   async login(email: string, password: string): Promise<IssuedSession> {
@@ -118,15 +128,22 @@ export class AuthService {
     if (!user || !(await this.verifyPassword(password, user.passwordHash))) {
       throw new UnauthorizedException('Invalid email or password');
     }
-    const token = await this.issueSession(user.id);
-    return { token, user: await this.identityFor(user.id) };
+    const membership = await this.prisma.membership.findFirst({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!membership) {
+      throw new UnauthorizedException('User has no workspace');
+    }
+    const token = await this.issueSession(user.id, membership.workspaceId);
+    return { token, user: await this.identityFor(user.id, membership.workspaceId) };
   }
 
   async logout(token: string | null): Promise<void> {
     if (!token) {
       return;
     }
-    await this.prisma.session.deleteMany({ where: { id: this.hashToken(token) } });
+    await this.prisma.session.deleteMany({ where: { id: hashToken(token) } });
   }
 
   async resolveToken(token: string | null): Promise<AuthContext | null> {
@@ -134,7 +151,7 @@ export class AuthService {
       return null;
     }
     const session = await this.prisma.session.findUnique({
-      where: { id: this.hashToken(token) },
+      where: { id: hashToken(token) },
       include: { user: true },
     });
     if (!session) {
@@ -144,8 +161,74 @@ export class AuthService {
       await this.prisma.session.deleteMany({ where: { id: session.id } });
       return null;
     }
-    const identity = await this.identityFor(session.userId);
-    return { ...identity, userId: identity.id };
+    const identity = await this.identityFor(session.userId, session.activeWorkspaceId);
+    return {
+      userId: identity.id,
+      sessionId: session.id,
+      email: identity.email,
+      role: identity.role,
+      workspaceId: identity.workspaceId,
+      workspaceName: identity.workspaceName,
+      workspaceRole: identity.workspaceRole,
+      memberships: identity.workspaces,
+    };
+  }
+
+  /** Switch the session's active workspace (membership required). */
+  async switchWorkspace(
+    userId: string,
+    sessionId: string,
+    workspaceId: string,
+  ): Promise<PublicIdentity> {
+    const membership = await this.prisma.membership.findUnique({
+      where: { userId_workspaceId: { userId, workspaceId } },
+    });
+    if (!membership) {
+      throw new BadRequestException('You are not a member of that workspace');
+    }
+    await this.prisma.session.updateMany({
+      where: { id: sessionId, userId },
+      data: { activeWorkspaceId: workspaceId },
+    });
+    return this.identityFor(userId, workspaceId);
+  }
+
+  /** Join a workspace via a one-time invitation token. */
+  async acceptInvitation(
+    userId: string,
+    sessionId: string,
+    token: string,
+  ): Promise<PublicIdentity> {
+    const invitation = await this.prisma.invitation.findUnique({
+      where: { tokenHash: hashToken(token) },
+    });
+    if (!invitation || invitation.acceptedAt || invitation.expiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException('Invitation is invalid, used, or expired');
+    }
+
+    const existing = await this.prisma.membership.findUnique({
+      where: {
+        userId_workspaceId: { userId, workspaceId: invitation.workspaceId },
+      },
+    });
+    if (!existing) {
+      await this.prisma.membership.create({
+        data: {
+          userId,
+          workspaceId: invitation.workspaceId,
+          role: invitation.role,
+        },
+      });
+    }
+    await this.prisma.invitation.update({
+      where: { id: invitation.id },
+      data: { acceptedAt: new Date() },
+    });
+    await this.prisma.session.updateMany({
+      where: { id: sessionId, userId },
+      data: { activeWorkspaceId: invitation.workspaceId },
+    });
+    return this.identityFor(userId, invitation.workspaceId);
   }
 
   /** Accepts `Authorization: Bearer <token>` or the session cookie. */
@@ -168,4 +251,3 @@ export class AuthService {
     return process.env.AUTH_REQUIRED === 'true';
   }
 }
-

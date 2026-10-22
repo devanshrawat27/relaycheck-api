@@ -1,9 +1,18 @@
+export interface WorkspaceSummary {
+  id: string;
+  name: string;
+  role: string;
+}
+
 export interface AuthContext {
   userId: string;
+  sessionId: string;
   email: string;
   role: string;
   workspaceId: string;
   workspaceName: string;
+  workspaceRole: string;
+  memberships: WorkspaceSummary[];
 }
 
 export interface PublicIdentity {
@@ -12,6 +21,8 @@ export interface PublicIdentity {
   role: string;
   workspaceId: string;
   workspaceName: string;
+  workspaceRole: string;
+  workspaces: WorkspaceSummary[];
 }
 
 export interface AuthState {

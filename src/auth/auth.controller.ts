@@ -61,6 +61,20 @@ export class AuthController {
       return { authRequired: false, user: null };
     }
     const identity = await this.auth.resolveToken(this.auth.tokenFromRequest(request));
-    return { authRequired: true, user: identity ? { ...identity, id: identity.userId } : null };
+    if (!identity) {
+      return { authRequired: true, user: null };
+    }
+    return {
+      authRequired: true,
+      user: {
+        id: identity.userId,
+        email: identity.email,
+        role: identity.role,
+        workspaceId: identity.workspaceId,
+        workspaceName: identity.workspaceName,
+        workspaceRole: identity.workspaceRole,
+        workspaces: identity.memberships,
+      },
+    };
   }
 }
