@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueueService, RunJob } from '../queue/queue.service';
 
@@ -70,6 +71,14 @@ export class OutboxDispatcher implements OnModuleInit, OnModuleDestroy {
             data: { status: 'sent', processedAt: new Date(), lastError: null },
           });
         } catch (error) {
+          if (
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2025'
+          ) {
+            // The row (or its run) was deleted concurrently (e.g. test cleanup).
+            this.logger.debug(`Outbox row ${event.id} disappeared; skipping`);
+            continue;
+          }
           const attempts = event.attempts + 1;
           const exhausted = attempts >= MAX_ATTEMPTS;
           const message = error instanceof Error ? error.message : 'Unknown error';

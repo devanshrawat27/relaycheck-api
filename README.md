@@ -76,6 +76,14 @@ Prerequisites: Control API, RabbitMQ, Scenario Runner, and the Demo Receiver
 (with `RELAYCHECK_TEST_MODE=true`) all running. `DATABASE_URL` and
 `SMOKE_DEMO_DATABASE_URL` are used only for cleanup.
 
+## Optional public API token
+
+By default the public run endpoints rely on loopback binding (local-only).
+If you override `HOST` (or otherwise expose the API), set `API_AUTH_TOKEN`
+and send `Authorization: Bearer <token>` with every `/api/runs` request.
+`/api/health` stays public. This is a single shared token, not user accounts
+or tenancy; unauthenticated mode remains the local default.
+
 ## Setup
 
 1. Start PostgreSQL (see the workspace root README).
