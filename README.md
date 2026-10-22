@@ -25,8 +25,9 @@ Ownership boundaries (see `ARCHITECTURE.md` at the workspace root):
   (1 delivery, 3 s timeout), `receiver_timeout` (1 delivery, 1 s timeout).
   Unknown scenarios, missing fields, and extra fields (e.g.
   `destinationUrl`) are rejected with 400.
-- `GET /api/runs?take=&status=` — bounded list (default 20, max 50); status
-  filter limited to `queued|running|passed|failed|error`.
+- `GET /api/runs?take=&status=&cursor=` — bounded list (default 20, max 50)
+  with an opaque **cursor** for older pages (`nextCursor` in the response);
+  status filter limited to `queued|running|passed|failed|error`.
 - `GET /api/runs/:id` — full detail: status, timestamps/duration, params,
   summary, `attempts[]`, `assertions[]`; 404 for unknown ids.
 
@@ -100,6 +101,33 @@ default.
 `API_AUTH_TOKEN` when set): runs by status, outbox pending/sending/failed and
 oldest pending age, and RabbitMQ work/dead-letter queue depths. The dashboard
 renders this on its **Diagnostics** page.
+
+`GET /api/metrics/prometheus` exposes the same data in Prometheus text format
+for scraping:
+
+```yaml
+scrape_configs:
+  - job_name: relaycheck
+    static_configs:
+      - targets: ['127.0.0.1:3200']
+    metrics_path: /api/metrics/prometheus
+    authorization:
+      credentials: <API_AUTH_TOKEN>   # only if configured
+```
+
+Useful alert thresholds: `relaycheck_queue_depth{queue="work"} > 100`,
+`relaycheck_outbox_oldest_pending_seconds > 60`,
+`relaycheck_outbox_events{state="failed"} > 0`,
+`relaycheck_queue_depth{queue="dead_letter"} > 0`.
+
+## Local safety valves
+
+- `RATE_LIMIT_PER_MINUTE` (default 120, `0` disables) — per-IP fixed window on
+  public API requests.
+- `API_MAX_RUNS_PER_DAY` (default `0` = unlimited) — UTC daily run quota;
+  exceeding it returns 429.
+
+These are local safeguards, not a multi-tenant quota system.
 
 ## Setup
 

@@ -1,5 +1,11 @@
 import { randomUUID } from 'crypto';
-import { Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import {
+  HttpException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { OutboxDispatcher } from '../queue/outbox.dispatcher';
 import { CreateRunDto } from './dto/create-run.dto';
@@ -60,6 +66,25 @@ export class RunsService {
       throw new InternalServerErrorException(`Unsupported scenario ${dto.scenario}`);
     }
 
+    const maxPerDay = Number(process.env.API_MAX_RUNS_PER_DAY ?? 0);
+    if (Number.isFinite(maxPerDay) && maxPerDay > 0) {
+      const startOfDay = new Date();
+      startOfDay.setUTCHours(0, 0, 0, 0);
+      const today = await this.prisma.testRun.count({
+        where: { createdAt: { gte: startOfDay } },
+      });
+      if (today >= maxPerDay) {
+        throw new HttpException(
+          {
+            statusCode: 429,
+            error: 'Too Many Requests',
+            message: `Daily run quota exceeded (${maxPerDay} per day)`,
+          },
+          429,
+        );
+      }
+    }
+
     const runId = randomUUID();
     const params: RunParams = {
       eventType: 'payment.succeeded',
@@ -109,9 +134,29 @@ export class RunsService {
 
   async listRuns(query: ListRunsQueryDto) {
     const take = query.take ?? 20;
+
+    let cursorFilter: object = {};
+    if (query.cursor) {
+      const cursorRun = await this.prisma.testRun.findUnique({
+        where: { id: query.cursor },
+        select: { createdAt: true, id: true },
+      });
+      if (cursorRun) {
+        cursorFilter = {
+          OR: [
+            { createdAt: { lt: cursorRun.createdAt } },
+            { createdAt: cursorRun.createdAt, id: { lt: cursorRun.id } },
+          ],
+        };
+      }
+    }
+
     const runs = await this.prisma.testRun.findMany({
-      where: query.status ? { status: query.status } : {},
-      orderBy: { createdAt: 'desc' },
+      where: {
+        ...(query.status ? { status: query.status } : {}),
+        ...cursorFilter,
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take,
       select: {
         id: true,
@@ -123,12 +168,14 @@ export class RunsService {
         durationMs: true,
       },
     });
+
     return {
       items: runs.map((r) => ({
         ...r,
         createdAt: r.createdAt.toISOString(),
         finishedAt: r.finishedAt?.toISOString() ?? null,
       })),
+      nextCursor: runs.length === take ? runs[runs.length - 1]?.id ?? null : null,
     };
   }
 

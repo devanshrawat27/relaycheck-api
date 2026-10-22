@@ -133,6 +133,32 @@ describe('Control API runs endpoints (e2e)', () => {
     await request(app.getHttpServer()).get('/api/runs').query({ take: 500 }).expect(400);
   });
 
+  it('paginates with an opaque cursor', async () => {
+    const server = app.getHttpServer();
+    const ids: string[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      const created = await request(server)
+        .post('/api/runs')
+        .send({ scenario: 'duplicate_delivery' })
+        .expect(202);
+      ids.push(created.body.runId as string);
+      createdRunIds.push(created.body.runId as string);
+    }
+
+    const first = await request(server).get('/api/runs').query({ take: 2 }).expect(200);
+    expect(first.body.items).toHaveLength(2);
+    expect(typeof first.body.nextCursor).toBe('string');
+
+    const second = await request(server)
+      .get('/api/runs')
+      .query({ take: 2, cursor: first.body.nextCursor })
+      .expect(200);
+    const firstIds = (first.body.items as { id: string }[]).map((i) => i.id);
+    const secondIds = (second.body.items as { id: string }[]).map((i) => i.id);
+    expect(secondIds.some((id) => firstIds.includes(id))).toBe(false);
+    expect([...firstIds, ...secondIds].filter((id) => ids.includes(id))).toHaveLength(3);
+  });
+
   it('GET /api/runs/:id returns 404 for an unknown run id', async () => {
     await request(app.getHttpServer())
       .get('/api/runs/00000000-0000-0000-0000-000000000000')

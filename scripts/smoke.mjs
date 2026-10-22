@@ -29,6 +29,7 @@ const TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS ?? 90000);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function main() {
+  const startedAt = Date.now();
   let runId = null;
   let orderId = null;
   let eventId = null;
@@ -107,6 +108,13 @@ async function main() {
         failures += 1;
       }
     }
+
+    const elapsed = Date.now() - startedAt;
+    console.log(
+      `[smoke] measured: end-to-end ${elapsed} ms, run duration ${
+        typeof run.durationMs === 'number' ? `${run.durationMs} ms` : 'unknown'
+      } (local machine, single run — not a benchmark)`,
+    );
   } catch (error) {
     console.error(`[smoke] ERROR: ${error instanceof Error ? error.message : error}`);
     failures += 1;

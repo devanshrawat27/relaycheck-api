@@ -1,11 +1,12 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiTokenGuard } from '../auth/api-token.guard';
+import { RateLimitGuard } from '../auth/rate-limit.guard';
 import { CreateRunDto } from './dto/create-run.dto';
 import { ListRunsQueryDto } from './dto/list-runs.dto';
 import { CreateRunResult, RunsService } from './runs.service';
 
 @Controller('runs')
-@UseGuards(ApiTokenGuard)
+@UseGuards(ApiTokenGuard, RateLimitGuard)
 export class RunsController {
   constructor(private readonly runs: RunsService) {}
 
@@ -26,3 +27,4 @@ export class RunsController {
     return this.runs.getRun(id);
   }
 }
+

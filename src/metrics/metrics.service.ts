@@ -69,4 +69,39 @@ export class MetricsService {
       generatedAt: new Date().toISOString(),
     };
   }
+
+  /** Prometheus text exposition (no external client dependency). */
+  async prometheus(): Promise<string> {
+    const metrics = await this.snapshot();
+    const lines: string[] = [];
+
+    lines.push('# HELP relaycheck_runs_total Persisted runs by status.');
+    lines.push('# TYPE relaycheck_runs_total gauge');
+    for (const [status, count] of Object.entries(metrics.runs)) {
+      lines.push(`relaycheck_runs_total{status="${status}"} ${count}`);
+    }
+
+    lines.push('# HELP relaycheck_outbox_events Outbox entries by state.');
+    lines.push('# TYPE relaycheck_outbox_events gauge');
+    lines.push(`relaycheck_outbox_events{state="pending"} ${metrics.outbox.pending}`);
+    lines.push(`relaycheck_outbox_events{state="sending"} ${metrics.outbox.sending}`);
+    lines.push(`relaycheck_outbox_events{state="failed"} ${metrics.outbox.failed}`);
+
+    lines.push('# HELP relaycheck_outbox_oldest_pending_seconds Age of the oldest unpublished job.');
+    lines.push('# TYPE relaycheck_outbox_oldest_pending_seconds gauge');
+    lines.push(
+      `relaycheck_outbox_oldest_pending_seconds ${
+        metrics.outbox.oldestPendingAgeMs === null
+          ? 0
+          : Math.round(metrics.outbox.oldestPendingAgeMs / 1000)
+      }`,
+    );
+
+    lines.push('# HELP relaycheck_queue_depth Messages ready in a queue (-1 unavailable).');
+    lines.push('# TYPE relaycheck_queue_depth gauge');
+    lines.push(`relaycheck_queue_depth{queue="work"} ${metrics.queues.work}`);
+    lines.push(`relaycheck_queue_depth{queue="dead_letter"} ${metrics.queues.deadLetter}`);
+
+    return `${lines.join('\n')}\n`;
+  }
 }
