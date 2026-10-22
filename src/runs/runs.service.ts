@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import {
+  BadRequestException,
   HttpException,
   Injectable,
   InternalServerErrorException,
@@ -18,6 +19,8 @@ export interface RunParams {
   orderId: string;
   deliveryCount: number;
   timeoutMs: number;
+  httpStatus?: number;
+  delayMs?: number;
 }
 
 export interface CreateRunResult {
@@ -27,30 +30,59 @@ export interface CreateRunResult {
   createdAt: string;
 }
 
-/** Server-side bounds — timeout and delivery count are never user-controlled. */
-interface ScenarioDefinition {
-  deliveryCount: number;
-  timeoutMs: number;
-  summary: string;
-}
+/**
+ * Scenario defaults and bounded parameter overrides. IDs and the target are
+ * always server-generated; irrelevant parameters are rejected per scenario.
+ */
+function resolveScenario(dto: CreateRunDto): { params: RunParams; summary: string } {
+  const eventType = 'payment.succeeded';
+  const identity = {
+    eventType,
+    eventId: `evt_${randomUUID()}`,
+    orderId: `ord_${randomUUID()}`,
+  };
 
-const SCENARIOS: Record<string, ScenarioDefinition> = {
-  duplicate_delivery: {
-    deliveryCount: 3,
-    timeoutMs: 5000,
-    summary: '3 deliveries of one event ID must produce one business effect',
-  },
-  receiver_failure: {
-    deliveryCount: 1,
-    timeoutMs: 3000,
-    summary: 'Receiver returns a controlled 503; no business effect may be applied',
-  },
-  receiver_timeout: {
-    deliveryCount: 1,
-    timeoutMs: 1000,
-    summary: 'Receiver delays past the client timeout; the delivery must be recorded as timed out',
-  },
-};
+  if (dto.scenario === 'duplicate_delivery') {
+    if (dto.httpStatus !== undefined || dto.delayMs !== undefined) {
+      throw new BadRequestException('httpStatus/delayMs are not supported for duplicate_delivery');
+    }
+    const deliveryCount = dto.deliveryCount ?? 3;
+    const timeoutMs = dto.timeoutMs ?? 5000;
+    return {
+      params: { ...identity, deliveryCount, timeoutMs },
+      summary: `${deliveryCount} deliveries of one event ID must produce one business effect`,
+    };
+  }
+
+  if (dto.scenario === 'receiver_failure') {
+    if (dto.deliveryCount !== undefined || dto.delayMs !== undefined) {
+      throw new BadRequestException('deliveryCount/delayMs are not supported for receiver_failure');
+    }
+    const timeoutMs = dto.timeoutMs ?? 3000;
+    const httpStatus = dto.httpStatus ?? 503;
+    return {
+      params: { ...identity, deliveryCount: 1, timeoutMs, httpStatus },
+      summary: `Receiver returns a controlled ${httpStatus}; no business effect may be applied`,
+    };
+  }
+
+  if (dto.scenario === 'receiver_timeout') {
+    if (dto.deliveryCount !== undefined || dto.httpStatus !== undefined) {
+      throw new BadRequestException('deliveryCount/httpStatus are not supported for receiver_timeout');
+    }
+    const timeoutMs = dto.timeoutMs ?? 1000;
+    const delayMs = dto.delayMs ?? Math.min(10000, timeoutMs + 1000);
+    if (delayMs <= timeoutMs) {
+      throw new BadRequestException('delayMs must be greater than timeoutMs for receiver_timeout');
+    }
+    return {
+      params: { ...identity, deliveryCount: 1, timeoutMs, delayMs },
+      summary: `Receiver delays ${delayMs} ms past the ${timeoutMs} ms timeout; the delivery must be recorded as timed out`,
+    };
+  }
+
+  throw new InternalServerErrorException(`Unsupported scenario ${String(dto.scenario)}`);
+}
 
 @Injectable()
 export class RunsService {
@@ -62,11 +94,6 @@ export class RunsService {
   ) {}
 
   async createRun(dto: CreateRunDto, auth?: AuthContext): Promise<CreateRunResult> {
-    const scenario = SCENARIOS[dto.scenario];
-    if (!scenario) {
-      throw new InternalServerErrorException(`Unsupported scenario ${dto.scenario}`);
-    }
-
     const maxPerDay = Number(process.env.API_MAX_RUNS_PER_DAY ?? 0);
     if (Number.isFinite(maxPerDay) && maxPerDay > 0) {
       const startOfDay = new Date();
@@ -90,13 +117,7 @@ export class RunsService {
     }
 
     const runId = randomUUID();
-    const params: RunParams = {
-      eventType: 'payment.succeeded',
-      eventId: `evt_${randomUUID()}`,
-      orderId: `ord_${randomUUID()}`,
-      deliveryCount: scenario.deliveryCount,
-      timeoutMs: scenario.timeoutMs,
-    };
+    const { params, summary } = resolveScenario(dto);
 
     // Transactional outbox: the run row and the job payload commit together.
     // A crash between commit and publish cannot strand the run — the
@@ -110,7 +131,7 @@ export class RunsService {
           scenario: dto.scenario,
           status: 'queued',
           params: params as unknown as object,
-          summary: scenario.summary,
+          summary,
         },
       }),
       this.prisma.outboxEvent.create({
@@ -213,5 +234,6 @@ export class RunsService {
     };
   }
 }
+
 
 

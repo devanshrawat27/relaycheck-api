@@ -98,6 +98,76 @@ describe('Control API runs endpoints (e2e)', () => {
     expect(detail.body.summary).toContain('timed out');
   });
 
+  it('honors bounded custom parameters per scenario', async () => {
+    const server = app.getHttpServer();
+
+    const duplicate = await request(server)
+      .post('/api/runs')
+      .send({ scenario: 'duplicate_delivery', deliveryCount: 5, timeoutMs: 2000 })
+      .expect(202);
+    createdRunIds.push(duplicate.body.runId as string);
+    const duplicateDetail = await request(server)
+      .get(`/api/runs/${duplicate.body.runId}`)
+      .expect(200);
+    expect(duplicateDetail.body.params.deliveryCount).toBe(5);
+    expect(duplicateDetail.body.params.timeoutMs).toBe(2000);
+    expect(duplicateDetail.body.summary).toContain('5 deliveries');
+
+    const failure = await request(server)
+      .post('/api/runs')
+      .send({ scenario: 'receiver_failure', httpStatus: 429, timeoutMs: 2500 })
+      .expect(202);
+    createdRunIds.push(failure.body.runId as string);
+    const failureDetail = await request(server)
+      .get(`/api/runs/${failure.body.runId}`)
+      .expect(200);
+    expect(failureDetail.body.params.httpStatus).toBe(429);
+    expect(failureDetail.body.summary).toContain('429');
+
+    const timeout = await request(server)
+      .post('/api/runs')
+      .send({ scenario: 'receiver_timeout', timeoutMs: 800, delayMs: 1500 })
+      .expect(202);
+    createdRunIds.push(timeout.body.runId as string);
+    const timeoutDetail = await request(server)
+      .get(`/api/runs/${timeout.body.runId}`)
+      .expect(200);
+    expect(timeoutDetail.body.params.delayMs).toBe(1500);
+    expect(timeoutDetail.body.params.timeoutMs).toBe(800);
+  });
+
+  it('rejects parameters that do not apply to the scenario', async () => {
+    const server = app.getHttpServer();
+    await request(server)
+      .post('/api/runs')
+      .send({ scenario: 'duplicate_delivery', httpStatus: 500 })
+      .expect(400);
+    await request(server)
+      .post('/api/runs')
+      .send({ scenario: 'receiver_failure', delayMs: 2000 })
+      .expect(400);
+    await request(server)
+      .post('/api/runs')
+      .send({ scenario: 'receiver_timeout', httpStatus: 500 })
+      .expect(400);
+  });
+
+  it('rejects out-of-bounds and contradictory parameters', async () => {
+    const server = app.getHttpServer();
+    await request(server)
+      .post('/api/runs')
+      .send({ scenario: 'duplicate_delivery', deliveryCount: 9 })
+      .expect(400);
+    await request(server)
+      .post('/api/runs')
+      .send({ scenario: 'duplicate_delivery', timeoutMs: 100 })
+      .expect(400);
+    await request(server)
+      .post('/api/runs')
+      .send({ scenario: 'receiver_timeout', timeoutMs: 1000, delayMs: 500 })
+      .expect(400);
+  });
+
   it('POST /api/runs rejects an unknown scenario (400)', async () => {
     await request(app.getHttpServer())
       .post('/api/runs')

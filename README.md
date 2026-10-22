@@ -19,12 +19,13 @@ Ownership boundaries (see `ARCHITECTURE.md` at the workspace root):
 ## Endpoints
 
 - `GET /api/health` — service health.
-- `POST /api/runs` — body `{ "scenario": "..." }`; returns **202** with
-  `{ runId, status: "queued", scenario, createdAt }`. Supported scenarios:
-  `duplicate_delivery` (3 deliveries, 5 s timeout), `receiver_failure`
-  (1 delivery, 3 s timeout), `receiver_timeout` (1 delivery, 1 s timeout).
-  Unknown scenarios, missing fields, and extra fields (e.g.
-  `destinationUrl`) are rejected with 400.
+- `POST /api/runs` — body `{ "scenario": "..." }` plus optional bounded
+  parameters: `deliveryCount` (duplicate only, 1–5), `timeoutMs` (500–15000),
+  `httpStatus` (failure only, 400–599), `delayMs` (timeout only, 0–10000 and
+  must exceed `timeoutMs`). Irrelevant parameters are rejected with 400.
+  Returns **202** with `{ runId, status: "queued", scenario, createdAt }`.
+  Unknown scenarios and extra fields (e.g. `destinationUrl`) are rejected with
+  400. Event IDs and the target remain server-generated.
 - `GET /api/runs?take=&status=&cursor=` — bounded list (default 20, max 50)
   with an opaque **cursor** for older pages (`nextCursor` in the response);
   status filter limited to `queued|running|passed|failed|error`.
