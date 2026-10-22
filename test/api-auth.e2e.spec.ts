@@ -68,6 +68,21 @@ describe('Optional public API token (e2e)', () => {
     await request(app.getHttpServer()).get('/api/health').expect(200);
   });
 
+  it('protects aggregate metrics with the same token', async () => {
+    await request(app.getHttpServer()).get('/api/metrics').expect(401);
+
+    const res = await request(app.getHttpServer())
+      .get('/api/metrics')
+      .set('authorization', `Bearer ${TOKEN}`)
+      .expect(200);
+
+    expect(res.body.runs).toHaveProperty('queued');
+    expect(typeof res.body.outbox.pending).toBe('number');
+    expect(typeof res.body.outbox.failed).toBe('number');
+    expect(typeof res.body.queues.work).toBe('number');
+    expect(typeof res.body.queues.deadLetter).toBe('number');
+  });
+
   it('is harmless when the token is not configured (local default)', async () => {
     delete process.env.API_AUTH_TOKEN;
     await request(app.getHttpServer()).get('/api/runs').expect(200);

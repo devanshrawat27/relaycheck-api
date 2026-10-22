@@ -31,12 +31,14 @@ Ownership boundaries (see `ARCHITECTURE.md` at the workspace root):
   summary, `attempts[]`, `assertions[]`; 404 for unknown ids.
 
 Creating a run commits the run row and its job payload in a single database
-transaction (**transactional outbox**). A dispatcher publishes pending
-payloads to the durable queue `relaycheck.run.jobs` using a
-**publisher-confirm channel**, marks them sent, and retries failures — so a
-broker outage or a crash between database commit and publishing cannot strand
-a run. `POST /api/runs` therefore always returns 202 for a valid request; the
-run is `queued` until the runner claims it.
+transaction (**transactional outbox**). A dispatcher claims pending payloads
+atomically (`pending → sending` with a lock, so multiple API instances can
+run safely), publishes them to the durable queue `relaycheck.run.jobs` using
+a **publisher-confirm channel**, marks them sent, and retries failures —
+including releasing stale claims after a crash. A broker outage or a crash
+between database commit and publishing cannot strand a run. `POST /api/runs`
+therefore always returns 202 for a valid request; the run is `queued` until
+the runner claims it.
 
 ## Private internal endpoints (not for the dashboard)
 
@@ -76,13 +78,28 @@ Prerequisites: Control API, RabbitMQ, Scenario Runner, and the Demo Receiver
 (with `RELAYCHECK_TEST_MODE=true`) all running. `DATABASE_URL` and
 `SMOKE_DEMO_DATABASE_URL` are used only for cleanup.
 
+### Self-starting variant
+
+`npm run smoke:stack` provisions the local stack for you (infra, receiver in
+test mode, API, runner), runs the smoke test, then stops the app processes
+again. Requires Docker running, sibling checkouts of the receiver and runner,
+and existing builds (`npm run build` once per repo).
+
 ## Optional public API token
 
 By default the public run endpoints rely on loopback binding (local-only).
 If you override `HOST` (or otherwise expose the API), set `API_AUTH_TOKEN`
-and send `Authorization: Bearer <token>` with every `/api/runs` request.
-`/api/health` stays public. This is a single shared token, not user accounts
-or tenancy; unauthenticated mode remains the local default.
+and send `Authorization: Bearer <token>` with every `/api/runs` and
+`/api/metrics` request. `/api/health` stays public. This is a single shared
+token, not user accounts or tenancy; unauthenticated mode remains the local
+default.
+
+## Operational metrics
+
+`GET /api/metrics` returns aggregate counts only (guarded by
+`API_AUTH_TOKEN` when set): runs by status, outbox pending/sending/failed and
+oldest pending age, and RabbitMQ work/dead-letter queue depths. The dashboard
+renders this on its **Diagnostics** page.
 
 ## Setup
 

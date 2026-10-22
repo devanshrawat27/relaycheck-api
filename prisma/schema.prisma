@@ -72,6 +72,7 @@ model OutboxEvent {
   status      String    @default("pending")
   attempts    Int       @default(0)
   lastError   String?
+  lockedAt    DateTime?
   createdAt   DateTime  @default(now())
   processedAt DateTime?
 
