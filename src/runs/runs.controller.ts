@@ -1,13 +1,15 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { ApiTokenGuard } from '../auth/api-token.guard';
 import { CreateRunDto } from './dto/create-run.dto';
 import { ListRunsQueryDto } from './dto/list-runs.dto';
 import { CreateRunResult, RunsService } from './runs.service';
 
 @Controller('runs')
+@UseGuards(ApiTokenGuard)
 export class RunsController {
   constructor(private readonly runs: RunsService) {}
 
-  /** Create a run: 202 + runId + queued status. Publication to the queue lands in the dispatch task. */
+  /** Create a run: 202 + runId + queued status; dispatch happens via the outbox. */
   @Post()
   @HttpCode(202)
   createRun(@Body() dto: CreateRunDto): Promise<CreateRunResult> {
