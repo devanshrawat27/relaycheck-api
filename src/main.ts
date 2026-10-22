@@ -18,7 +18,9 @@ async function bootstrap(): Promise<void> {
   app.useBodyParser('json', { limit: '100kb' });
   app.enableShutdownHooks();
   const port = Number(process.env.PORT ?? 3200);
-  await app.listen(port);
+  // Local-first tool: never expose the API beyond this machine by default.
+  const host = process.env.HOST ?? '127.0.0.1';
+  await app.listen(port, host);
 }
 
 void bootstrap();

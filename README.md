@@ -19,29 +19,37 @@ Ownership boundaries (see `ARCHITECTURE.md` at the workspace root):
 ## Endpoints
 
 - `GET /api/health` — service health.
-- `POST /api/runs` — body `{ "scenario": "duplicate_delivery" }`; returns
-  **202** with `{ runId, status: "queued", scenario, createdAt }`. Unknown
-  scenarios, missing fields, and extra fields (e.g. `destinationUrl`) are
-  rejected with 400.
+- `POST /api/runs` — body `{ "scenario": "..." }`; returns **202** with
+  `{ runId, status: "queued", scenario, createdAt }`. Supported scenarios:
+  `duplicate_delivery` (3 deliveries, 5 s timeout), `receiver_failure`
+  (1 delivery, 3 s timeout), `receiver_timeout` (1 delivery, 1 s timeout).
+  Unknown scenarios, missing fields, and extra fields (e.g.
+  `destinationUrl`) are rejected with 400.
 - `GET /api/runs?take=&status=` — bounded list (default 20, max 50); status
   filter limited to `queued|running|passed|failed|error`.
 - `GET /api/runs/:id` — full detail: status, timestamps/duration, params,
   summary, `attempts[]`, `assertions[]`; 404 for unknown ids.
 
-Creating a run persists it as `queued` and then publishes a versioned job
-(`{schemaVersion: 1, runId, scenario, params}`) to the durable RabbitMQ
-queue `relaycheck.run.jobs`. If publication fails, the run is explicitly
-marked `error` with a safe error and the request returns 500 — a run is
-never silently stuck.
+Creating a run commits the run row and its job payload in a single database
+transaction (**transactional outbox**). A dispatcher publishes pending
+payloads to the durable queue `relaycheck.run.jobs` using a
+**publisher-confirm channel**, marks them sent, and retries failures — so a
+broker outage or a crash between database commit and publishing cannot strand
+a run. `POST /api/runs` therefore always returns 202 for a valid request; the
+run is `queued` until the runner claims it.
 
 ## Private internal endpoints (not for the dashboard)
 
 All require header `x-internal-token: <INTERNAL_API_TOKEN>` (unconfigured
 token / missing / wrong token → 401):
 
-- `POST /api/internal/runs/:id/claim` — `queued → running`, atomic via
-  conditional `updateMany`; a second claim of the same run → 409 (this is
-  what prevents a redelivered job from starting a concurrent execution).
+- `POST /api/internal/runs/:id/claim` — body `{ "workerId": "..." }`;
+  `queued → running` with a 30 s lease. A second claim → 409 with the current
+  status and lease expiry (ownership conflict, not proof of abandonment).
+- `POST /api/internal/runs/:id/heartbeat` — body `{ "workerId": "..." }`;
+  extends the lease for the owning worker only.
+- `POST /api/internal/runs/:id/recover` — finalizes `running → error` **only
+  when the lease has expired**; otherwise 409.
 - `POST /api/internal/runs/:id/attempts` — record one delivery attempt
   (number, eventId, httpStatus?, outcome `delivered|error|timeout`,
   durationMs, errorDetail?). Only accepted while the run is `running`.

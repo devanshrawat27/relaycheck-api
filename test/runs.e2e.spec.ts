@@ -24,6 +24,7 @@ describe('Control API runs endpoints (e2e)', () => {
   });
 
   afterAll(async () => {
+    await prisma.outboxEvent.deleteMany({ where: { runId: { in: createdRunIds } } });
     await prisma.testRun.deleteMany({ where: { id: { in: createdRunIds } } });
     await prisma.$disconnect();
     await app.close();

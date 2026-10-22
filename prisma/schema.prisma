@@ -17,6 +17,8 @@ model TestRun {
   params      Json
   summary     String?
   safeError   String?
+  claimedBy   String?
+  leaseExpiresAt DateTime?
   createdAt   DateTime  @default(now())
   startedAt   DateTime?
   finishedAt  DateTime?
@@ -59,4 +61,20 @@ model AssertionResult {
 
   @@index([runId])
   @@map("assertion_results")
+}
+
+// Transactional outbox: a run row and its job payload commit together, so a
+// crash between persistence and publishing cannot strand a queued run.
+model OutboxEvent {
+  id          String    @id
+  runId       String
+  payload     Json
+  status      String    @default("pending")
+  attempts    Int       @default(0)
+  lastError   String?
+  createdAt   DateTime  @default(now())
+  processedAt DateTime?
+
+  @@index([status, createdAt])
+  @@map("outbox_events")
 }

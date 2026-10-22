@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { QueueService } from '../queue/queue.service';
+import { OutboxDispatcher } from '../queue/outbox.dispatcher';
 import { CreateRunDto } from './dto/create-run.dto';
 import { ListRunsQueryDto } from './dto/list-runs.dto';
 
@@ -51,7 +51,7 @@ export class RunsService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly queue: QueueService,
+    private readonly outbox: OutboxDispatcher,
   ) {}
 
   async createRun(dto: CreateRunDto): Promise<CreateRunResult> {
@@ -69,38 +69,35 @@ export class RunsService {
       timeoutMs: scenario.timeoutMs,
     };
 
-    const run = await this.prisma.testRun.create({
-      data: {
-        id: runId,
-        scenario: dto.scenario,
-        status: 'queued',
-        params: params as unknown as object,
-        summary: scenario.summary,
-      },
-    });
-
-    // The run is persisted BEFORE publishing so a job can never reference a
-    // missing run. If publication fails, the run is explicitly moved to
-    // `error` with a safe message — never left silently queued forever.
-    try {
-      await this.queue.publishRunJob({
-        schemaVersion: 1,
-        runId,
-        scenario: dto.scenario,
-        params,
-      });
-    } catch (error) {
-      this.logger.error(`Failed to publish job for run ${runId}: ${(error as Error).message}`);
-      await this.prisma.testRun.update({
-        where: { id: runId },
+    // Transactional outbox: the run row and the job payload commit together.
+    // A crash between commit and publish cannot strand the run — the
+    // dispatcher retries pending payloads and only marks them sent after the
+    // broker confirms.
+    const [run] = await this.prisma.$transaction([
+      this.prisma.testRun.create({
         data: {
-          status: 'error',
-          safeError: 'Run job could not be published to the queue',
-          finishedAt: new Date(),
+          id: runId,
+          scenario: dto.scenario,
+          status: 'queued',
+          params: params as unknown as object,
+          summary: scenario.summary,
         },
-      });
-      throw new InternalServerErrorException('Run job could not be published to the queue');
-    }
+      }),
+      this.prisma.outboxEvent.create({
+        data: {
+          id: randomUUID(),
+          runId,
+          payload: {
+            schemaVersion: 1,
+            runId,
+            scenario: dto.scenario,
+            params,
+          } as unknown as object,
+        },
+      }),
+    ]);
+
+    this.outbox.kick();
 
     return {
       runId: run.id,

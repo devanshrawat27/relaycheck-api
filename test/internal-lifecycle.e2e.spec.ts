@@ -35,11 +35,16 @@ describe('Queue publication + internal lifecycle contract (e2e)', () => {
   }
 
   async function consumeOneJob(): Promise<Record<string, unknown>> {
-    const msg = await ch.get(RUN_JOBS_QUEUE, { noAck: true });
-    if (!msg) {
-      throw new Error(`Expected a job in ${RUN_JOBS_QUEUE}, found none`);
+    // The outbox dispatcher publishes asynchronously; poll for the message.
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
+      const msg = await ch.get(RUN_JOBS_QUEUE, { noAck: true });
+      if (msg) {
+        return JSON.parse(msg.content.toString()) as Record<string, unknown>;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
     }
-    return JSON.parse(msg.content.toString()) as Record<string, unknown>;
+    throw new Error(`Expected a job in ${RUN_JOBS_QUEUE}, found none`);
   }
 
   beforeAll(async () => {
@@ -60,6 +65,7 @@ describe('Queue publication + internal lifecycle contract (e2e)', () => {
   });
 
   afterAll(async () => {
+    await prisma.outboxEvent.deleteMany({ where: { runId: { in: createdRunIds } } });
     await prisma.testRun.deleteMany({ where: { id: { in: createdRunIds } } });
     await prisma.$disconnect();
     await ch.close();
@@ -100,18 +106,85 @@ describe('Queue publication + internal lifecycle contract (e2e)', () => {
       .expect(401);
   });
 
-  it('claims queued -> running once; a second claim is refused (409)', async () => {
+  it('claims queued -> running once with a lease; a second claim is refused (409)', async () => {
     const runId = await createRun();
     await consumeOneJob();
 
     const claim = await request(server())
       .post(`/api/internal/runs/${runId}/claim`)
       .set('x-internal-token', TOKEN)
+      .send({ workerId: 'test-worker' })
       .expect(201);
-    expect(claim.body).toEqual({ runId, status: 'running' });
+    expect(claim.body.runId).toBe(runId);
+    expect(claim.body.status).toBe('running');
+    expect(typeof claim.body.leaseExpiresAt).toBe('string');
+
+    const second = await request(server())
+      .post(`/api/internal/runs/${runId}/claim`)
+      .set('x-internal-token', TOKEN)
+      .send({ workerId: 'other-worker' })
+      .expect(409);
+    expect(second.body.status).toBe('running');
+    expect(typeof second.body.leaseExpiresAt).toBe('string');
+  });
+
+  it('extends the lease only for the owning worker', async () => {
+    const runId = await createRun();
+    await consumeOneJob();
 
     await request(server())
       .post(`/api/internal/runs/${runId}/claim`)
+      .set('x-internal-token', TOKEN)
+      .send({ workerId: 'test-worker' })
+      .expect(201);
+
+    await request(server())
+      .post(`/api/internal/runs/${runId}/heartbeat`)
+      .set('x-internal-token', TOKEN)
+      .send({ workerId: 'test-worker' })
+      .expect(201);
+
+    await request(server())
+      .post(`/api/internal/runs/${runId}/heartbeat`)
+      .set('x-internal-token', TOKEN)
+      .send({ workerId: 'another-worker' })
+      .expect(409);
+  });
+
+  it('recovers only a run whose lease has expired (never an active worker)', async () => {
+    const runId = await createRun();
+    await consumeOneJob();
+
+    await request(server())
+      .post(`/api/internal/runs/${runId}/claim`)
+      .set('x-internal-token', TOKEN)
+      .send({ workerId: 'test-worker' })
+      .expect(201);
+
+    // Active lease: recovery must be refused.
+    await request(server())
+      .post(`/api/internal/runs/${runId}/recover`)
+      .set('x-internal-token', TOKEN)
+      .expect(409);
+
+    // Simulate an abandoned worker by expiring the lease.
+    await prisma.testRun.update({
+      where: { id: runId },
+      data: { leaseExpiresAt: new Date(Date.now() - 60_000) },
+    });
+
+    await request(server())
+      .post(`/api/internal/runs/${runId}/recover`)
+      .set('x-internal-token', TOKEN)
+      .expect(201);
+
+    const detail = await request(server()).get(`/api/runs/${runId}`).expect(200);
+    expect(detail.body.status).toBe('error');
+    expect(detail.body.safeError).toContain('lease expired');
+
+    // Already recovered: second recovery is refused.
+    await request(server())
+      .post(`/api/internal/runs/${runId}/recover`)
       .set('x-internal-token', TOKEN)
       .expect(409);
   });
@@ -124,6 +197,7 @@ describe('Queue publication + internal lifecycle contract (e2e)', () => {
     await request(server())
       .post(`/api/internal/runs/${runId}/claim`)
       .set('x-internal-token', TOKEN)
+      .send({ workerId: 'test-worker' })
       .expect(201);
 
     await request(server())
@@ -186,6 +260,7 @@ describe('Queue publication + internal lifecycle contract (e2e)', () => {
     await request(server())
       .post(`/api/internal/runs/${runId}/claim`)
       .set('x-internal-token', TOKEN)
+      .send({ workerId: 'test-worker' })
       .expect(201);
 
     for (const attemptNumber of [1, 2, 3]) {
@@ -262,28 +337,34 @@ describe('Queue publication + internal lifecycle contract (e2e)', () => {
       .expect(409);
   });
 
-  it('handles publication failure explicitly: run becomes error and POST returns 500', async () => {
+  it('keeps the run queued and retries via the outbox when the broker is unavailable', async () => {
     const originalUrl = process.env.AMQP_URL;
     process.env.AMQP_URL = 'amqp://guest:guest@localhost:5999';
+    let runId = '';
     try {
       const res = await request(server())
         .post('/api/runs')
-        .send({ scenario: 'duplicate_delivery' });
-      expect(res.status).toBe(500);
+        .send({ scenario: 'duplicate_delivery' })
+        .expect(202);
+      runId = res.body.runId as string;
+      createdRunIds.push(runId);
 
-      // The failing create still leaves a row: look it up to check its state.
-      const list = await request(server()).get('/api/runs').query({ take: 5 }).expect(200);
-      const failed = (list.body.items as { id: string; status: string }[]).find(
-        (i) => i.status === 'error',
-      );
-      expect(failed).toBeTruthy();
-      createdRunIds.push(failed!.id);
+      // The run is persisted and still queued; the job payload is pending.
+      const detail = await request(server()).get(`/api/runs/${runId}`).expect(200);
+      expect(detail.body.status).toBe('queued');
 
-      const detail = await request(server()).get(`/api/runs/${failed!.id}`).expect(200);
-      expect(detail.body.status).toBe('error');
-      expect(detail.body.safeError).toContain('queue');
+      const outbox = await prisma.outboxEvent.findMany({ where: { runId } });
+      expect(outbox).toHaveLength(1);
+      expect(outbox[0]?.status).toBe('pending');
     } finally {
       process.env.AMQP_URL = originalUrl;
     }
+
+    // Once the broker is reachable again, the dispatcher publishes the job.
+    const job = await consumeOneJob();
+    expect(job.runId).toBe(runId);
+    const after = await request(server()).get(`/api/runs/${runId}`).expect(200);
+    expect(after.body.status).toBe('queued');
   });
 });
+
