@@ -353,9 +353,23 @@ describe('Queue publication + internal lifecycle contract (e2e)', () => {
       const detail = await request(server()).get(`/api/runs/${runId}`).expect(200);
       expect(detail.body.status).toBe('queued');
 
-      const outbox = await prisma.outboxEvent.findMany({ where: { runId } });
+      // The dispatcher may be mid-claim; wait until the failed publish has
+      // returned the row to `pending`.
+      let outbox: { status: string; attempts: number }[] = [];
+      const outboxDeadline = Date.now() + 10000;
+      while (Date.now() < outboxDeadline) {
+        outbox = await prisma.outboxEvent.findMany({
+          where: { runId },
+          select: { status: true, attempts: true },
+        });
+        if (outbox.length === 1 && outbox[0]?.status === 'pending' && outbox[0].attempts >= 1) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
       expect(outbox).toHaveLength(1);
       expect(outbox[0]?.status).toBe('pending');
+      expect(outbox[0]?.attempts).toBeGreaterThanOrEqual(1);
     } finally {
       process.env.AMQP_URL = originalUrl;
     }
