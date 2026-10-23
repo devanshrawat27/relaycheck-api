@@ -1,0 +1,152 @@
+# RelayCheck local "production-style" stack: HTTPS via Caddy, internal-only
+# app/database/broker ports. Intended for a single machine/team, not SaaS.
+name: relaycheck-prod
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-relaycheck}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-relaycheck}
+      POSTGRES_DB: ${POSTGRES_DB:-relaycheck}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-relaycheck} -d ${POSTGRES_DB:-relaycheck}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-relaycheck}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-relaycheck}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq/mnesia
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+
+  demo-receiver:
+    build:
+      context: ../../relaycheck-demo-receiver
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3100
+      DATABASE_URL: postgresql://${POSTGRES_USER:-relaycheck}:${POSTGRES_PASSWORD:-relaycheck}@postgres:5432/relaycheck_demo
+      # The demo receiver is the system under test; test controls are required
+      # for the demo scenarios. This stack is local-only.
+      RELAYCHECK_TEST_MODE: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3100/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  api:
+    build:
+      context: ..
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3200
+      DATABASE_URL: postgresql://${POSTGRES_USER:-relaycheck}:${POSTGRES_PASSWORD:-relaycheck}@postgres:5432/relaycheck
+      AMQP_URL: amqp://${RABBITMQ_DEFAULT_USER:-relaycheck}:${RABBITMQ_DEFAULT_PASS:-relaycheck}@rabbitmq:5672
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN in infra/.env}
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:?set API_AUTH_TOKEN in infra/.env}
+      DEMO_RECEIVER_URL: http://demo-receiver:3100
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3200/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  runner:
+    build:
+      context: ../../relaycheck-runner
+    restart: unless-stopped
+    environment:
+      CONTROL_API_URL: http://api:3200
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN in infra/.env}
+      DEMO_RECEIVER_URL: http://demo-receiver:3100
+      AMQP_URL: amqp://${RABBITMQ_DEFAULT_USER:-relaycheck}:${RABBITMQ_DEFAULT_PASS:-relaycheck}@rabbitmq:5672
+    depends_on:
+      api:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ../../relaycheck-web
+    restart: unless-stopped
+    environment:
+      CONTROL_API_URL: http://api:3200
+      DEMO_RECEIVER_URL: http://demo-receiver:3100
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      RELAYCHECK_HOST: ${RELAYCHECK_HOST:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  rabbitmq-data:
+  caddy-data:
+  caddy-config:
+

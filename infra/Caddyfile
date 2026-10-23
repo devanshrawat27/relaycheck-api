@@ -1,0 +1,13 @@
+# RelayCheck local production-style deployment.
+# HTTPS uses Caddy's internal CA (trust the root certificate to avoid warnings).
+{$RELAYCHECK_HOST:localhost} {
+	tls internal
+
+	handle /api/* {
+		reverse_proxy api:3200
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}
