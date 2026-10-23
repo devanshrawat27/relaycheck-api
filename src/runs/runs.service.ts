@@ -10,6 +10,8 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { OutboxDispatcher } from '../queue/outbox.dispatcher';
 import { AuthContext } from '../auth/auth.types';
+import { TargetsService } from '../targets/targets.service';
+import { TargetDefinition } from '../targets/targets.types';
 import { CreateRunDto } from './dto/create-run.dto';
 import { ListRunsQueryDto } from './dto/list-runs.dto';
 
@@ -21,6 +23,9 @@ export interface RunParams {
   timeoutMs: number;
   httpStatus?: number;
   delayMs?: number;
+  targetName: string;
+  targetUrl: string;
+  targetOracle: boolean;
 }
 
 export interface CreateRunResult {
@@ -34,12 +39,18 @@ export interface CreateRunResult {
  * Scenario defaults and bounded parameter overrides. IDs and the target are
  * always server-generated; irrelevant parameters are rejected per scenario.
  */
-function resolveScenario(dto: CreateRunDto): { params: RunParams; summary: string } {
+function resolveScenario(
+  dto: CreateRunDto,
+  target: TargetDefinition,
+): { params: RunParams; summary: string } {
   const eventType = 'payment.succeeded';
   const identity = {
     eventType,
     eventId: `evt_${randomUUID()}`,
     orderId: `ord_${randomUUID()}`,
+    targetName: target.name,
+    targetUrl: target.url,
+    targetOracle: target.oracle,
   };
 
   if (dto.scenario === 'duplicate_delivery') {
@@ -91,6 +102,7 @@ export class RunsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly outbox: OutboxDispatcher,
+    private readonly targets: TargetsService,
   ) {}
 
   async createRun(dto: CreateRunDto, auth?: AuthContext): Promise<CreateRunResult> {
@@ -116,8 +128,22 @@ export class RunsService {
       }
     }
 
+    const target = this.targets.resolve(dto.target ?? 'demo-receiver');
+    if (!target) {
+      throw new BadRequestException(`Unknown target "${dto.target}"`);
+    }
+    if (dto.scenario !== 'duplicate_delivery' && target.kind !== 'demo') {
+      throw new BadRequestException(
+        'receiver_failure/receiver_timeout require the demo receiver target',
+      );
+    }
+
     const runId = randomUUID();
-    const { params, summary } = resolveScenario(dto);
+    const { params, summary: baseSummary } = resolveScenario(dto, target);
+    const summary =
+      target.kind === 'remote'
+        ? `${baseSummary} (remote target ${target.name}; delivery status only, no oracle)`
+        : baseSummary;
 
     // Transactional outbox: the run row and the job payload commit together.
     // A crash between commit and publish cannot strand the run — the
@@ -234,6 +260,7 @@ export class RunsService {
     };
   }
 }
+
 
 
 

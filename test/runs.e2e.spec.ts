@@ -168,6 +168,68 @@ describe('Control API runs endpoints (e2e)', () => {
       .expect(400);
   });
 
+  it('lists configured targets by name only', async () => {
+    const res = await request(app.getHttpServer()).get('/api/targets').expect(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    const demo = (res.body as Record<string, unknown>[]).find((t) => t.name === 'demo-receiver');
+    expect(demo).toMatchObject({ kind: 'demo', oracle: true });
+    expect(demo).not.toHaveProperty('url');
+  });
+
+  it('accepts allowlisted remote targets and rejects unknown/unsuitable ones', async () => {
+    process.env.TARGETS_JSON = JSON.stringify([
+      { name: 'staging-webhook', url: 'https://staging.example.test/hooks', oracle: false },
+    ]);
+    try {
+      const created = await request(app.getHttpServer())
+        .post('/api/runs')
+        .send({ scenario: 'duplicate_delivery', target: 'staging-webhook' })
+        .expect(202);
+      createdRunIds.push(created.body.runId as string);
+
+      const detail = await request(app.getHttpServer())
+        .get(`/api/runs/${created.body.runId}`)
+        .expect(200);
+      expect(detail.body.params.targetName).toBe('staging-webhook');
+      expect(detail.body.params.targetUrl).toBe('https://staging.example.test/hooks');
+      expect(detail.body.params.targetOracle).toBe(false);
+      expect(detail.body.summary).toContain('remote target');
+
+      const targets = await request(app.getHttpServer()).get('/api/targets').expect(200);
+      expect((targets.body as { name: string }[]).some((t) => t.name === 'staging-webhook')).toBe(
+        true,
+      );
+
+      // Fault scenarios are demo-receiver only.
+      await request(app.getHttpServer())
+        .post('/api/runs')
+        .send({ scenario: 'receiver_failure', target: 'staging-webhook' })
+        .expect(400);
+
+      // Unknown names are rejected.
+      await request(app.getHttpServer())
+        .post('/api/runs')
+        .send({ scenario: 'duplicate_delivery', target: 'unknown-target' })
+        .expect(400);
+    } finally {
+      delete process.env.TARGETS_JSON;
+    }
+  });
+
+  it('drops configured remote targets that point at private hosts unless allowed', async () => {
+    process.env.TARGETS_JSON = JSON.stringify([
+      { name: 'private-hook', url: 'http://127.0.0.1:9999/hooks', oracle: false },
+    ]);
+    try {
+      await request(app.getHttpServer())
+        .post('/api/runs')
+        .send({ scenario: 'duplicate_delivery', target: 'private-hook' })
+        .expect(400);
+    } finally {
+      delete process.env.TARGETS_JSON;
+    }
+  });
+
   it('POST /api/runs rejects an unknown scenario (400)', async () => {
     await request(app.getHttpServer())
       .post('/api/runs')

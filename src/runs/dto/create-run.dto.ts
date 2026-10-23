@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
 
 /** Scenarios currently supported. Deliveries always target the fixed local demo receiver. */
 export const SUPPORTED_SCENARIOS = [
@@ -16,6 +16,12 @@ export type ScenarioId = (typeof SUPPORTED_SCENARIOS)[number];
 export class CreateRunDto {
   @IsIn(SUPPORTED_SCENARIOS)
   scenario!: ScenarioId;
+
+  /** Configured target name (never a URL); defaults to the demo receiver. */
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9][a-z0-9-]{0,40}$/i)
+  target?: string;
 
   /** duplicate_delivery only: 1-5 attempts. */
   @IsOptional()
@@ -49,3 +55,4 @@ export class CreateRunDto {
   @Max(10000)
   delayMs?: number;
 }
+

@@ -15,6 +15,11 @@ export interface RunJob {
     orderId: string;
     deliveryCount: number;
     timeoutMs: number;
+    httpStatus?: number;
+    delayMs?: number;
+    targetName: string;
+    targetUrl: string;
+    targetOracle: boolean;
   };
 }
 
@@ -77,3 +82,4 @@ export class QueueService {
     }
   }
 }
+

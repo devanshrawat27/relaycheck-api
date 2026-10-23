@@ -6,13 +6,15 @@ import { MetricsModule } from './metrics/metrics.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueueModule } from './queue/queue.module';
 import { RunsModule } from './runs/runs.module';
+import { TargetsModule } from './targets/targets.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 
 @Module({
-  imports: [PrismaModule, QueueModule, RunsModule, InternalModule, MetricsModule, AuthModule, WorkspacesModule],
+  imports: [PrismaModule, QueueModule, RunsModule, InternalModule, MetricsModule, AuthModule, WorkspacesModule, TargetsModule],
   controllers: [HealthController],
   providers: [],
 })
 export class AppModule {}
+
 
 
