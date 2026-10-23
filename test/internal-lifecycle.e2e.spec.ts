@@ -321,6 +321,71 @@ describe('Queue publication + internal lifecycle contract (e2e)', () => {
     );
   });
 
+  it('resumes an abandoned run and exposes recorded progress (internal only)', async () => {
+    const runId = await createRun();
+    const job = await consumeOneJob();
+    const eventId = (job.params as { eventId: string }).eventId;
+
+    await request(server())
+      .post(`/api/internal/runs/${runId}/claim`)
+      .set('x-internal-token', TOKEN)
+      .send({ workerId: 'first-worker' })
+      .expect(201);
+
+    await request(server())
+      .post(`/api/internal/runs/${runId}/attempts`)
+      .set('x-internal-token', TOKEN)
+      .send({
+        attemptNumber: 1,
+        eventId,
+        outcome: 'delivered',
+        httpStatus: 200,
+        durationMs: 25,
+      })
+      .expect(201);
+
+    // The progress endpoint is internal-only.
+    await request(server()).get(`/api/internal/runs/${runId}/progress`).expect(401);
+
+    const progress = await request(server())
+      .get(`/api/internal/runs/${runId}/progress`)
+      .set('x-internal-token', TOKEN)
+      .expect(200);
+    expect(progress.body.status).toBe('running');
+    expect(progress.body.attempts).toHaveLength(1);
+    expect(progress.body.attempts[0]).toMatchObject({ attemptNumber: 1, outcome: 'delivered' });
+
+    // Simulate an abandoned worker, then take the run over.
+    await prisma.testRun.update({
+      where: { id: runId },
+      data: { leaseExpiresAt: new Date(Date.now() - 60_000) },
+    });
+
+    const resumed = await request(server())
+      .post(`/api/internal/runs/${runId}/resume-claim`)
+      .set('x-internal-token', TOKEN)
+      .send({ workerId: 'resuming-worker' })
+      .expect(201);
+    expect(typeof resumed.body.leaseExpiresAt).toBe('string');
+
+    // An active lease cannot be resumed again.
+    await request(server())
+      .post(`/api/internal/runs/${runId}/resume-claim`)
+      .set('x-internal-token', TOKEN)
+      .send({ workerId: 'other-worker' })
+      .expect(409);
+
+    await request(server())
+      .post(`/api/internal/runs/${runId}/finalize`)
+      .set('x-internal-token', TOKEN)
+      .send({ status: 'passed', summary: 'resumed and finished' })
+      .expect(201);
+
+    const detail = await request(server()).get(`/api/runs/${runId}`).expect(200);
+    expect(detail.body.status).toBe('passed');
+    expect(detail.body.attempts).toHaveLength(1);
+  });
+
   it('rejects attempts on a queued (not claimed) run', async () => {
     const runId = await createRun();
     await consumeOneJob();

@@ -103,6 +103,59 @@ export class InternalService {
     );
   }
 
+  /**
+   * Take over an abandoned run (expired lease) and continue executing it.
+   * Unlike `recover`, this does not finalize the run: the caller resumes from
+   * the already-recorded attempts.
+   */
+  async resumeClaim(runId: string, workerId: string): Promise<ClaimResponse> {
+    const now = new Date();
+    const leaseExpiresAt = this.leaseExpiry();
+    const updated = await this.prisma.testRun.updateMany({
+      where: { id: runId, status: 'running', leaseExpiresAt: { lt: now } },
+      data: { claimedBy: workerId, leaseExpiresAt },
+    });
+    if (updated.count === 1) {
+      return { runId, status: 'running', leaseExpiresAt: leaseExpiresAt.toISOString() };
+    }
+    throw new ConflictException(
+      `Run ${runId} cannot be resumed (terminal, missing, or lease still active)`,
+    );
+  }
+
+  /** Progress for safe resume: recorded attempts and assertions (internal only). */
+  async progress(runId: string) {
+    const run = await this.prisma.testRun.findUnique({
+      where: { id: runId },
+      include: {
+        attempts: { orderBy: { attemptNumber: 'asc' } },
+        assertions: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+    if (!run) {
+      throw new NotFoundException(`No run with id ${runId}`);
+    }
+    return {
+      runId: run.id,
+      status: run.status,
+      scenario: run.scenario,
+      attempts: run.attempts.map((attempt) => ({
+        attemptNumber: attempt.attemptNumber,
+        eventId: attempt.eventId,
+        httpStatus: attempt.httpStatus,
+        outcome: attempt.outcome,
+        durationMs: attempt.durationMs,
+        errorDetail: attempt.errorDetail,
+      })),
+      assertions: run.assertions.map((assertion) => ({
+        name: assertion.name,
+        expected: assertion.expected,
+        actual: assertion.actual,
+        passed: assertion.passed,
+      })),
+    };
+  }
+
   async recordAttempt(runId: string, dto: RecordAttemptDto) {
     const run = await this.prisma.testRun.findUnique({ where: { id: runId } });
     if (!run) {

@@ -1,4 +1,4 @@
-import { Body, Controller, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { FinalizeRunDto, RecordAssertionDto, RecordAttemptDto } from './dto/internal.dto';
 import { WorkerDto } from './dto/worker.dto';
 import { InternalAuthGuard } from './internal-auth.guard';
@@ -29,6 +29,16 @@ export class InternalController {
     return this.internal.recoverRun(id);
   }
 
+  @Post(':id/resume-claim')
+  resumeClaim(@Param('id') id: string, @Body() dto: WorkerDto) {
+    return this.internal.resumeClaim(id, dto.workerId);
+  }
+
+  @Get(':id/progress')
+  progress(@Param('id') id: string) {
+    return this.internal.progress(id);
+  }
+
   @Post(':id/attempts')
   recordAttempt(@Param('id') id: string, @Body() dto: RecordAttemptDto) {
     return this.internal.recordAttempt(id, dto);
@@ -44,3 +54,4 @@ export class InternalController {
     return this.internal.finalizeRun(id, dto);
   }
 }
+
