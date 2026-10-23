@@ -125,6 +125,13 @@ verifies 3 attempts and 1 business effect, prints measured durations, and
 cleans up. Exit code `0` = pass, `1` = failure. `npm run smoke:stack` starts
 the stack, runs the smoke, and stops the app processes.
 
+## Production-style deployment
+
+infra/docker-compose.prod.yml runs the whole stack behind Caddy with HTTPS
+(internal CA), health checks, restart policies, secrets from infra/.env, and
+internal-only app/database/broker ports. See SETUP.md (section 7) for
+trust, backup/restore, and upgrade steps.
+
 ## Setup
 
 1. Start PostgreSQL (see the workspace root README / `SETUP.md`).
@@ -139,3 +146,4 @@ the stack, runs the smoke, and stops the app processes.
 - `npm run build` / `npm start` / `npm run start:dev` - build and run on 3200.
 
 Package manager: **npm** (lockfiles are committed). Node >= 20.
+

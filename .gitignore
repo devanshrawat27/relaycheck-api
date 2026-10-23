@@ -6,4 +6,6 @@ coverage/
 !.env.example
 *.log
 .DS_Store
-Thumbs.db!.env.prod.example
+Thumbs.db
+!.env.prod.example
+
