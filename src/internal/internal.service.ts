@@ -1,4 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { EmailService } from '../email/email.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { FinalizeRunDto, RecordAssertionDto, RecordAttemptDto } from './dto/internal.dto';
 
@@ -29,7 +30,10 @@ export interface ClaimConflict {
  */
 @Injectable()
 export class InternalService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly email: EmailService,
+  ) {}
 
   private leaseExpiry(): Date {
     return new Date(Date.now() + LEASE_MS);
@@ -221,6 +225,31 @@ export class InternalService {
     if (updated.count === 0) {
       throw new ConflictException(`Run ${runId} is not running (is ${existing.status}); finalize refused`);
     }
+    await this.alertOnFailure(runId, existing.scenario, dto.status, dto.summary, dto.safeError);
     return { runId, status: dto.status };
+  }
+
+  /**
+   * Send an email alert when a run reaches a terminal failure state, so an
+   * operator can react without polling the dashboard. Only fires when
+   * ALERT_EMAIL is configured (off by default for local-first use).
+   */
+  private async alertOnFailure(
+    runId: string,
+    scenario: string,
+    status: string,
+    summary?: string,
+    safeError?: string | null,
+  ): Promise<void> {
+    const to = process.env.ALERT_EMAIL;
+    if (!to || (status !== 'failed' && status !== 'error')) {
+      return;
+    }
+    const detail = [summary, safeError].filter(Boolean).join('\n');
+    await this.email.send(
+      to,
+      `RelayCheck run ${status}: ${scenario}`,
+      `Run ${runId} finished as ${status}.\nScenario: ${scenario}\n${detail}`,
+    );
   }
 }
