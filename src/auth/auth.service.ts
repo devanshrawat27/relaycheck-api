@@ -122,7 +122,6 @@ export class AuthService {
       throw error;
     }
 
-    await this.sendVerificationEmail(userId, normalized);
     const token = await this.issueSession(userId, workspaceId);
     return { token, user: await this.identityFor(userId, workspaceId) };
   }
@@ -238,43 +237,6 @@ export class AuthService {
 
   private appUrl(): string {
     return (process.env.APP_URL ?? 'http://localhost:3000').replace(/\/$/, '');
-  }
-
-  private async sendVerificationEmail(userId: string, email: string): Promise<void> {
-    const token = randomToken(32);
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { emailVerificationTokenHash: hashToken(token) },
-    });
-    const link = `${this.appUrl()}/verify-email?token=${token}`;
-    await this.email.send(
-      email,
-      'Verify your RelayCheck email',
-      `Confirm your RelayCheck account by opening: ${link}`,
-      `<p>Confirm your RelayCheck account:</p><p><a href="${link}">${link}</a></p>`,
-    );
-  }
-
-  async verifyEmail(token: string): Promise<void> {
-    const user = await this.prisma.user.findUnique({
-      where: { emailVerificationTokenHash: hashToken(token) },
-    });
-    if (!user) {
-      throw new BadRequestException('Invalid or expired verification link');
-    }
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: { emailVerificationTokenHash: null, emailVerifiedAt: new Date() },
-    });
-  }
-
-  async resendVerification(email: string): Promise<void> {
-    const normalized = email.trim().toLowerCase();
-    const user = await this.prisma.user.findUnique({ where: { email: normalized } });
-    if (!user || user.emailVerifiedAt) {
-      return;
-    }
-    await this.sendVerificationEmail(user.id, normalized);
   }
 
   async forgotPassword(email: string): Promise<void> {

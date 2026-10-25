@@ -8,7 +8,7 @@ import {
   Res,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
-import { LoginDto, RegisterDto, ForgotPasswordDto, ResendVerificationDto, ResetPasswordDto, VerifyEmailDto } from './auth.dto';
+import { LoginDto, RegisterDto, ForgotPasswordDto, ResetPasswordDto } from './auth.dto';
 import { AuthService, SESSION_COOKIE } from './auth.service';
 import { AuthState } from './auth.types';
 
@@ -51,20 +51,6 @@ export class AuthController {
   async logout(@Req() request: Request, @Res({ passthrough: true }) response: Response) {
     await this.auth.logout(this.auth.tokenFromRequest(request));
     response.clearCookie(SESSION_COOKIE, { path: '/' });
-    return { ok: true };
-  }
-
-  @Post('verify-email')
-  @HttpCode(200)
-  async verifyEmail(@Body() dto: VerifyEmailDto) {
-    await this.auth.verifyEmail(dto.token);
-    return { ok: true };
-  }
-
-  @Post('resend-verification')
-  @HttpCode(200)
-  async resendVerification(@Body() dto: ResendVerificationDto) {
-    await this.auth.resendVerification(dto.email);
     return { ok: true };
   }
 

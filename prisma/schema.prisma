@@ -17,8 +17,6 @@ model User {
   role         String       @default("user")
   createdAt    DateTime     @default(now())
 
-  emailVerifiedAt             DateTime? @map("email_verified_at")
-  emailVerificationTokenHash  String?   @unique @map("email_verification_token_hash")
   resetTokenHash              String?   @unique @map("reset_token_hash")
   resetTokenExpiresAt         DateTime? @map("reset_token_expires_at")
 

@@ -22,18 +22,6 @@ export class LoginDto {
   password!: string;
 }
 
-export class VerifyEmailDto {
-  @IsString()
-  @MinLength(1)
-  token!: string;
-}
-
-export class ResendVerificationDto {
-  @IsEmail()
-  @MaxLength(254)
-  email!: string;
-}
-
 export class ForgotPasswordDto {
   @IsEmail()
   @MaxLength(254)
