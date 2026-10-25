@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from './auth/auth.module';
+import { EmailModule } from './email/email.module';
 import { HealthController } from './health/health.controller';
 import { InternalModule } from './internal/internal.module';
 import { MetricsModule } from './metrics/metrics.module';
@@ -10,7 +11,7 @@ import { TargetsModule } from './targets/targets.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 
 @Module({
-  imports: [PrismaModule, QueueModule, RunsModule, InternalModule, MetricsModule, AuthModule, WorkspacesModule, TargetsModule],
+  imports: [PrismaModule, QueueModule, RunsModule, InternalModule, MetricsModule, AuthModule, WorkspacesModule, TargetsModule, EmailModule],
   controllers: [HealthController],
   providers: [],
 })

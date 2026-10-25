@@ -1,8 +1,8 @@
 # RelayCheck local infrastructure.
 # Canonical copy lives in the relaycheck-api repository (infra/).
-# Starts PostgreSQL 16 and RabbitMQ 3.13 with persistent volumes and creates
-# both logical databases on first start: `relaycheck` (platform) and
-# `relaycheck_demo` (demo receiver).
+# Starts PostgreSQL 16, RabbitMQ 3.13, and Mailpit (local SMTP + web UI) with
+# persistent volumes and creates both logical databases on first start:
+# `relaycheck` (platform) and `relaycheck_demo` (demo receiver).
 name: relaycheck
 
 services:
@@ -38,6 +38,14 @@ services:
       interval: 10s
       timeout: 10s
       retries: 12
+    restart: unless-stopped
+
+  mailpit:
+    image: axllent/mailpit:v1.20
+    container_name: relaycheck-mailpit
+    ports:
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+      - "${MAILPIT_UI_PORT:-8025}:8025"
     restart: unless-stopped
 
 volumes:

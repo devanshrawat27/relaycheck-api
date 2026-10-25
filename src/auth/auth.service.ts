@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { Request } from 'express';
+import { EmailService } from '../email/email.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthContext, PublicIdentity } from './auth.types';
 import { hashToken, randomToken } from './tokens';
@@ -33,7 +34,10 @@ export interface IssuedSession {
  */
 @Injectable()
 export class AuthService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly email: EmailService,
+  ) {}
 
   private async hashPassword(password: string): Promise<string> {
     const salt = randomToken(16);
@@ -118,6 +122,7 @@ export class AuthService {
       throw error;
     }
 
+    await this.sendVerificationEmail(userId, normalized);
     const token = await this.issueSession(userId, workspaceId);
     return { token, user: await this.identityFor(userId, workspaceId) };
   }
@@ -229,6 +234,85 @@ export class AuthService {
       data: { activeWorkspaceId: invitation.workspaceId },
     });
     return this.identityFor(userId, invitation.workspaceId);
+  }
+
+  private appUrl(): string {
+    return (process.env.APP_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+  }
+
+  private async sendVerificationEmail(userId: string, email: string): Promise<void> {
+    const token = randomToken(32);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { emailVerificationTokenHash: hashToken(token) },
+    });
+    const link = `${this.appUrl()}/verify-email?token=${token}`;
+    await this.email.send(
+      email,
+      'Verify your RelayCheck email',
+      `Confirm your RelayCheck account by opening: ${link}`,
+      `<p>Confirm your RelayCheck account:</p><p><a href="${link}">${link}</a></p>`,
+    );
+  }
+
+  async verifyEmail(token: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { emailVerificationTokenHash: hashToken(token) },
+    });
+    if (!user) {
+      throw new BadRequestException('Invalid or expired verification link');
+    }
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { emailVerificationTokenHash: null, emailVerifiedAt: new Date() },
+    });
+  }
+
+  async resendVerification(email: string): Promise<void> {
+    const normalized = email.trim().toLowerCase();
+    const user = await this.prisma.user.findUnique({ where: { email: normalized } });
+    if (!user || user.emailVerifiedAt) {
+      return;
+    }
+    await this.sendVerificationEmail(user.id, normalized);
+  }
+
+  async forgotPassword(email: string): Promise<void> {
+    const normalized = email.trim().toLowerCase();
+    const user = await this.prisma.user.findUnique({ where: { email: normalized } });
+    if (!user) {
+      return;
+    }
+    const token = randomToken(32);
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        resetTokenHash: hashToken(token),
+        resetTokenExpiresAt: new Date(Date.now() + 30 * 60 * 1000),
+      },
+    });
+    const link = `${this.appUrl()}/reset-password?token=${token}`;
+    await this.email.send(
+      normalized,
+      'Reset your RelayCheck password',
+      `Reset your password by opening: ${link}`,
+      `<p>Reset your RelayCheck password:</p><p><a href="${link}">${link}</a></p>`,
+    );
+  }
+
+  async resetPassword(token: string, password: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { resetTokenHash: hashToken(token) },
+    });
+    if (!user || !user.resetTokenExpiresAt || user.resetTokenExpiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException('Invalid or expired reset link');
+    }
+    const passwordHash = await this.hashPassword(password);
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { passwordHash, resetTokenHash: null, resetTokenExpiresAt: null },
+    });
+    await this.prisma.session.deleteMany({ where: { userId: user.id } });
   }
 
   /** Accepts `Authorization: Bearer <token>` or the session cookie. */
