@@ -39,7 +39,8 @@ network.
   `API_AUTH_TOKEN`, and set the same `INTERNAL_API_TOKEN` in the runner.
 - **Certificates:** the Compose stack uses Caddy's internal CA by default; use a
   real ACME certificate for a public domain.
-- **Email:** verification/reset/alert mail goes through `SMTP_HOST` (Mailpit
-  locally); point it at a real SMTP relay for production mail.
+- **Email:** password-reset and run-failure alert mail goes through `SMTP_HOST`
+  (Mailpit locally); point it at a real SMTP relay for production mail. There is
+  no email verification.
 
 See `RUNBOOK.md` for operational runbooks and `SETUP.md` for backup/restore.

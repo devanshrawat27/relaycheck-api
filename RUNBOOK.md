@@ -8,7 +8,7 @@ observable symptom to the likely cause and the steps to resolve it.
 - **Dashboard Diagnostics** (`/diagnostics`): service health, run counts,
   work-queue depth, dead-letter queue depth, outbox backlog.
 - **RabbitMQ management UI**: `http://localhost:15672` (guest/guest).
-- **Mailpit UI**: `http://localhost:8025` (outbound verification/reset/alert mail).
+- **Mailpit UI**: `http://localhost:8025` (outbound password-reset and alert mail).
 - **Prometheus metrics**: `GET /api/metrics/prometheus`.
 - **API health**: `GET /api/health`.
 
@@ -40,10 +40,10 @@ observable symptom to the likely cause and the steps to resolve it.
 - Fix: inspect the poison messages, fix the producer/consumer, then replay or purge
   with the DLQ tooling.
 
-### Email alerts / verification mail are not arriving
+### Email alerts or password-reset mail are not arriving
 - Likely: `ALERT_EMAIL`/`SMTP_*` unset, or Mailpit is down.
-- Check: `SMTP_HOST`/`SMTP_PORT` in `apps/api/.env` (default `localhost:1025`); the
-  Mailpit container is running; the Mailpit UI for queued messages.
+- Check: `SMTP_HOST`/`SMTP_PORT` in `relaycheck-api/.env` (default `localhost:1025`);
+  the Mailpit container is running; the Mailpit UI for queued messages.
 - Fix: set the SMTP/ALERT vars, ensure `mailpit` is up, restart the API.
 
 ### The API is unreachable

@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import { PrismaClient } from '@prisma/client';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { isPrivateHost } from '../src/targets/targets.types';
 
 describe('Control API runs endpoints (e2e)', () => {
   jest.setTimeout(30000);
@@ -296,4 +297,57 @@ describe('Control API runs endpoints (e2e)', () => {
       .get('/api/runs/00000000-0000-0000-0000-000000000000')
       .expect(404);
   });
+});
+
+describe('isPrivateHost (egress guard)', () => {
+  const privates = [
+    'localhost',
+    'sub.localhost',
+    'host.local',
+    '127.0.0.1',
+    '10.0.0.1',
+    '172.16.0.1',
+    '192.168.1.1',
+    '169.254.169.254',
+    '0.0.0.0',
+    '[::1]',
+    '::1',
+    '[::]',
+    '::',
+    '[fe80::1]',
+    'fe80::1',
+    '[fc00::1]',
+    'fc00::1',
+    '[::ffff:127.0.0.1]',
+    '::ffff:127.0.0.1',
+    '[::ffff:10.0.0.1]',
+    '::ffff:10.0.0.1',
+    '[::ffff:169.254.169.254]',
+    '::ffff:169.254.169.254',
+    '[::127.0.0.1]',
+    '::127.0.0.1',
+  ];
+
+  const publics = [
+    'example.com',
+    'api.github.com',
+    '93.184.216.34',
+    '1.1.1.1',
+    '8.8.8.8',
+    '[2606:4700:4700::1111]',
+    '2606:4700:4700::1111',
+    '[::ffff:8.8.8.8]',
+    '::ffff:8.8.8.8',
+  ];
+
+  for (const host of privates) {
+    it(`flags ${host} as private`, () => {
+      expect(isPrivateHost(host)).toBe(true);
+    });
+  }
+  for (const host of publics) {
+    it(`does not flag ${host} as private`, () => {
+      expect(isPrivateHost(host)).toBe(false);
+    });
+  }
 });
