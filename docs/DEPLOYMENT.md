@@ -22,6 +22,12 @@ Only 80/443 are published; every other service is internal.
 
 ## Option B — Render (backend) + Vercel (frontend) + CloudAMQP (RabbitMQ)
 
+> **Verified live (2026-10-27):** frontend `https://relaycheck-web.vercel.app`,
+> API `https://relaycheck-api.onrender.com`, receiver
+> `https://relaycheck-receiver.onrender.com`, runner
+> `https://relaycheck-runner.onrender.com` (free web service), Neon Postgres,
+> CloudAMQP RabbitMQ. A real run returns `passed` with 3 attempts / 1 effect.
+
 Split deployment: the Next.js dashboard on Vercel, the three backend services
 and Postgres on Render, and RabbitMQ on CloudAMQP (Render has no managed
 RabbitMQ).
@@ -69,8 +75,10 @@ no cross-domain cookie setup is needed.
    - API: `postgresql://...@<host>/relaycheck`
    - Receiver: `postgresql://...@<host>/relaycheck_demo`
 
-> Free-tier note: Render Postgres plans change over time. If you need a free
-> Postgres, Neon (neon.tech) also works — create two databases there.
+> **Verified setup (2026-10-27):** the live deployment uses **Neon** (neon.tech,
+> free, expires never) with databases `relaycheck` and `relaycheck_demo`, because
+> Render's free Postgres is deleted after 30 days. Either works; Neon is the
+> free-forever choice. Use the **direct** (non-`-pooler`) host for migrations.
 
 ### 3. Control API — Render web service
 
@@ -101,9 +109,15 @@ Environment variables:
 
 The image applies Prisma migrations automatically on start.
 
-### 4. Scenario Runner — Render worker
+### 4. Scenario Runner — Render (free web service)
 
-- **New → Background Worker →** connect the `relaycheck-runner` repo → **Docker**.
+Render has **no free background-worker plan** (workers start at ~$7/month). The
+runner now has an optional HTTP health endpoint, so it can run as a **free web
+service** instead:
+
+- **New → Web Service →** connect the `relaycheck-runner` repo → **Docker**,
+  plan **Free**.
+- Health check path: `/`.
 
 | Key | Value |
 |---|---|
@@ -111,6 +125,10 @@ The image applies Prisma migrations automatically on start.
 | `INTERNAL_API_TOKEN` | **exactly the same** value as the API |
 | `DEMO_RECEIVER_URL` | the receiver's public URL |
 | `AMQP_URL` | the CloudAMQP `amqps://...` URL |
+| `SELF_URL` | this runner's own URL (self-ping keeps the free instance awake) |
+
+The health endpoint is inert locally because `PORT` is unset there. Note that a
+free web service can still cold-start; a paid worker is the always-on option.
 
 ### 5. Demo Receiver — Render web service
 
